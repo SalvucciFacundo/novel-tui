@@ -16,14 +16,22 @@ type FileCharacterRepository struct {
 
 // NewFileCharacterRepository creates a new FileCharacterRepository.
 func NewFileCharacterRepository(baseDir string) *FileCharacterRepository {
-	return &FileCharacterRepository{baseDir: baseDir}
+	return &FileCharacterRepository{baseDir: ExpandHome(baseDir)}
 }
 
 func (r *FileCharacterRepository) filePath() string {
-	return filepath.Join(r.baseDir, "characters.json")
+	personajes := filepath.Join(r.baseDir, "personajes.json")
+	if _, err := os.Stat(personajes); err == nil {
+		return personajes
+	}
+	legacyChars := filepath.Join(r.baseDir, "characters.json")
+	if _, err := os.Stat(legacyChars); err == nil {
+		return legacyChars
+	}
+	return personajes
 }
 
-// ListAll loads all characters from characters.json.
+// ListAll loads all characters from personajes.json (or characters.json).
 func (r *FileCharacterRepository) ListAll() ([]domain.Character, error) {
 	path := r.filePath()
 	data, err := os.ReadFile(path)
@@ -46,7 +54,7 @@ func (r *FileCharacterRepository) ListAll() ([]domain.Character, error) {
 	return characters, nil
 }
 
-// SaveAll serializes all characters to characters.json atomically.
+// SaveAll serializes all characters to personajes.json (or characters.json) atomically.
 func (r *FileCharacterRepository) SaveAll(chars []domain.Character) error {
 	path := r.filePath()
 	dir := filepath.Dir(path)
@@ -59,7 +67,7 @@ func (r *FileCharacterRepository) SaveAll(chars []domain.Character) error {
 		return fmt.Errorf("failed to marshal characters: %w", err)
 	}
 
-	tmpPath := filepath.Join(dir, ".characters.json.tmp")
+	tmpPath := filepath.Join(dir, fmt.Sprintf(".%s.tmp", filepath.Base(path)))
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write temp character file: %w", err)
 	}

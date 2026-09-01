@@ -10,6 +10,30 @@
 
 ## 📸 Overview
 
+### Launcher / Dashboard
+
+```text
+  ███╗   ██╗ ██████╗ ██╗   ██╗███████╗██╗         ████████╗██╗   ██╗██╗
+  ████╗  ██║██╔═══██╗██║   ██║██╔════╝██║         ╚══██╔══╝██║   ██║██║
+  ██╔██╗ ██║██║   ██║██║   ██║█████╗  ██║   █████╗   ██║   ██║   ██║██║
+  ██║╚██╗██║██║   ██║╚██╗ ██╔╝██╔══╝  ██║   ╚════╝   ██║   ██║   ██║██║
+  ██║ ╚████║╚██████╔╝ ╚████╔╝ ███████╗███████╗       ██║   ╚██████╔╝██║
+  ╚═╝  ╚═══╝ ╚═════╝   ╚═══╝  ╚══════╝╚══════╝       ╚═╝    ╚═════╝ ╚═╝
+             — Entorno de Escritura para Novelas y Ficción —
+
+ ┌─ Novelas Recientes ────────────────────┐  ┌─ Menú Principal ───────────────┐
+ │  > 📖 El Despertar del Rey (12 cap)    │  │  [c] ⚡ Continuar última novela│
+ │    📖 Crónicas del Abismo (5 cap)      │  │  [n] ✨ Nueva novela           │
+ │    📖 Sombras en el Valle (1 cap)      │  │  [o] 📂 Abrir otra carpeta     │
+ │                                        │  │  [l] 🤖 Configurar LLM / IA    │
+ │                                        │  │  [d] 📁 Cambiar Raíz (~/Novelas│
+ │                                        │  │  [q] 🚪 Salir                  │
+ └────────────────────────────────────────┘  └────────────────────────────────┘
+  📁 Raíz: /home/kuno/Novelas  |  🤖 LLM: Ollama (qwen2.5:7b)  |  [Enter: Abrir]
+```
+
+### Editor de Novela
+
 ```text
 ┌─ [Chapters] [Lore / Characters] ───────┬─ [Capítulo 01: El Comienzo] ──────────────┐
 │ > 01. El Comienzo                      │ El viento soplaba con fuerza sobre las    │

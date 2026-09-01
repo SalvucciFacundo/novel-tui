@@ -182,15 +182,12 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 			}
 		case key.Matches(msg, m.keys.New):
 			if m.ActiveTab == TabChapters {
-				title := fmt.Sprintf("Chapter %d", len(m.Chapters)+1)
-				newChap, err := m.chapterRepo.Create(title)
-				if err == nil {
-					m.Chapters = append(m.Chapters, newChap)
-					m.SelectedChapter = len(m.Chapters) - 1
-					return m, tea.Batch(
-						func() tea.Msg { return messages.ChapterCreatedMsg{Chapter: newChap} },
-						func() tea.Msg { return messages.ChapterSelectedMsg{Chapter: newChap} },
-					)
+				return m, func() tea.Msg {
+					return messages.ShowModalMsg{
+						Purpose: messages.ModalPurposeNewChapter,
+						Title:   "Nuevo Capítulo",
+						Prompt:  "Título del nuevo capítulo:",
+					}
 				}
 			}
 		}
@@ -199,7 +196,14 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// SetSize updates dimensions of the sidebar.
+// SetRepositories updates the active repositories and reloads data.
+func (m *SidebarModel) SetRepositories(chapterRepo domain.ChapterRepository, characterRepo domain.CharacterRepository) tea.Cmd {
+	m.chapterRepo = chapterRepo
+	m.characterRepo = characterRepo
+	m.SelectedChapter = 0
+	m.SelectedChar = 0
+	return m.ReloadDataCmd()
+}
 func (m *SidebarModel) SetSize(w, h int) {
 	m.Width = w
 	m.Height = h

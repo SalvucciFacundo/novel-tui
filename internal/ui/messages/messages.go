@@ -4,6 +4,25 @@ import (
 	"github.com/SalvucciFacundo/novel-tui/internal/domain"
 )
 
+// ViewState represents the active top-level screen view.
+type ViewState int
+
+const (
+	ViewStateLauncher ViewState = iota
+	ViewStateEditor
+	ViewStateLLMConfig
+)
+
+// ModalPurpose identifies the intent of an open modal dialog.
+type ModalPurpose string
+
+const (
+	ModalPurposeNewNovel   ModalPurpose = "new_novel"
+	ModalPurposeNewChapter ModalPurpose = "new_chapter"
+	ModalPurposeSetRootDir ModalPurpose = "set_root_dir"
+	ModalPurposeOpenFolder ModalPurpose = "open_folder"
+)
+
 // FocusState represents which panel currently has keyboard focus.
 type FocusState int
 
@@ -15,6 +34,70 @@ const (
 // FocusMsg notifies components of focus changes.
 type FocusMsg struct {
 	Target FocusState
+}
+
+// ChangeViewMsg requests a transition to another top-level view state.
+type ChangeViewMsg struct {
+	View ViewState
+}
+
+// ShowModalMsg requests opening a centered modal dialog.
+type ShowModalMsg struct {
+	Purpose      ModalPurpose
+	Title        string
+	Prompt       string
+	InitialValue string
+	ErrorMsg     string
+}
+
+// HideModalMsg closes the active modal dialog without committing.
+type HideModalMsg struct{}
+
+// SubmitModalMsg is dispatched when a modal dialog is confirmed with input.
+type SubmitModalMsg struct {
+	Purpose ModalPurpose
+	Value   string
+}
+
+// CreateNovelMsg requests scaffolding a new novel project.
+type CreateNovelMsg struct {
+	Title string
+}
+
+// CreateChapterMsg requests creating a new sequential chapter in the active novel.
+type CreateChapterMsg struct {
+	Title string
+}
+
+// OpenNovelMsg requests opening a specific novel folder path in the editor.
+type OpenNovelMsg struct {
+	Path string
+}
+
+// SetRootDirMsg requests updating the global root directory for novels.
+type SetRootDirMsg struct {
+	Path string
+}
+
+// SaveLLMConfigMsg requests persisting modified LLM configuration settings.
+type SaveLLMConfigMsg struct {
+	Config domain.LLMConfig
+}
+
+// ConfigLoadedMsg informs components of the loaded global configuration.
+type ConfigLoadedMsg struct {
+	Config *domain.AppConfig
+}
+
+// NovelListRefreshedMsg is sent when recent novels in root dir are re-scanned.
+type NovelListRefreshedMsg struct {
+	Novels []domain.NovelMetadata
+}
+
+// NotificationMsg presents a transient status message to the user.
+type NotificationMsg struct {
+	Message string
+	IsError bool
 }
 
 // ChapterSelectedMsg is emitted when a chapter is selected in the sidebar.

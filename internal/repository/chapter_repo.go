@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/SalvucciFacundo/novel-tui/internal/domain"
@@ -17,20 +18,30 @@ type FileChapterRepository struct {
 }
 
 // NewFileChapterRepository creates a new FileChapterRepository.
-// It ensures the target chapters directory exists.
+// It ensures the target capitulos (or legacy chapters) directory exists.
 func NewFileChapterRepository(baseDir string) (*FileChapterRepository, error) {
-	chaptersDir := filepath.Join(baseDir, "chapters")
-	if err := os.MkdirAll(chaptersDir, 0755); err != nil {
+	baseDir = ExpandHome(baseDir)
+	repo := &FileChapterRepository{baseDir: baseDir}
+	dir := repo.chaptersDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create chapters directory: %w", err)
 	}
-	return &FileChapterRepository{baseDir: baseDir}, nil
+	return repo, nil
 }
 
 func (r *FileChapterRepository) chaptersDir() string {
-	return filepath.Join(r.baseDir, "chapters")
+	capitulos := filepath.Join(r.baseDir, "capitulos")
+	if _, err := os.Stat(capitulos); err == nil {
+		return capitulos
+	}
+	legacyChapters := filepath.Join(r.baseDir, "chapters")
+	if _, err := os.Stat(legacyChapters); err == nil {
+		return legacyChapters
+	}
+	return capitulos
 }
 
-// ListAll scans and parses all .md files in the chapters/ directory.
+// ListAll scans and parses all .txt and .md files in the chapters/capitulos directory.
 func (r *FileChapterRepository) ListAll() ([]domain.Chapter, error) {
 	dir := r.chaptersDir()
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -44,11 +55,16 @@ func (r *FileChapterRepository) ListAll() ([]domain.Chapter, error) {
 
 	var chapters []domain.Chapter
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".md") {
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 
 		filename := entry.Name()
+		ext := strings.ToLower(filepath.Ext(filename))
+		if ext != ".txt" && ext != ".md" {
+			continue
+		}
+
 		id := strings.TrimSuffix(filename, filepath.Ext(filename))
 		fullPath := filepath.Join(dir, filename)
 
@@ -61,7 +77,8 @@ func (r *FileChapterRepository) ListAll() ([]domain.Chapter, error) {
 		title := extractTitle(id, content)
 		wordCount := countWords(content)
 
-		relPath := filepath.Join("chapters", filename)
+		relDir := filepath.Base(dir)
+		relPath := filepath.Join(relDir, filename)
 		chapters = append(chapters, domain.Chapter{
 			ID:        id,
 			Title:     title,
@@ -79,9 +96,35 @@ func (r *FileChapterRepository) ListAll() ([]domain.Chapter, error) {
 	return chapters, nil
 }
 
+// resolveFile resolves the actual filename for a given chapter ID (.txt, .md, or exact).
+func (r *FileChapterRepository) resolveFile(id string) string {
+	dir := r.chaptersDir()
+	// Try txt first
+	txtPath := filepath.Join(dir, id+".txt")
+	if _, err := os.Stat(txtPath); err == nil {
+		return txtPath
+	}
+	// Try md
+	mdPath := filepath.Join(dir, id+".md")
+	if _, err := os.Stat(mdPath); err == nil {
+		return mdPath
+	}
+	// Try exact id
+	exactPath := filepath.Join(dir, id)
+	if _, err := os.Stat(exactPath); err == nil {
+		return exactPath
+	}
+
+	// Default fallback: if dir base is "chapters", use .md for backward compat, else .txt
+	if filepath.Base(dir) == "chapters" {
+		return mdPath
+	}
+	return txtPath
+}
+
 // LoadContent reads the full content for a given chapter ID.
 func (r *FileChapterRepository) LoadContent(id string) (string, error) {
-	filePath := filepath.Join(r.chaptersDir(), id+".md")
+	filePath := r.resolveFile(id)
 	contentBytes, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to read chapter %s: %w", id, err)
@@ -92,7 +135,7 @@ func (r *FileChapterRepository) LoadContent(id string) (string, error) {
 // SaveContent writes content atomically using a temporary file.
 func (r *FileChapterRepository) SaveContent(id string, content string) error {
 	dir := r.chaptersDir()
-	targetPath := filepath.Join(dir, id+".md")
+	targetPath := r.resolveFile(id)
 	tmpPath := filepath.Join(dir, fmt.Sprintf(".%s.tmp", id))
 
 	if err := os.WriteFile(tmpPath, []byte(content), 0644); err != nil {
@@ -113,30 +156,62 @@ func (r *FileChapterRepository) Create(title string) (domain.Chapter, error) {
 		title = "Untitled Chapter"
 	}
 
-	slug := slugify(title)
 	dir := r.chaptersDir()
+	isLegacy := filepath.Base(dir) == "chapters"
+	ext := ".txt"
+	if isLegacy {
+		ext = ".md"
+	}
 
-	// Ensure unique slug
-	baseSlug := slug
-	counter := 1
-	for {
-		candidate := filepath.Join(dir, slug+".md")
-		if _, err := os.Stat(candidate); os.IsNotExist(err) {
-			break
+	slug := slugify(title)
+
+	// Check if this is sequential (starts with number) or needs sequence
+	entries, _ := os.ReadDir(dir)
+	maxSeq := 0
+	numRegex := regexp.MustCompile(`^(\d+)`)
+	for _, entry := range entries {
+		matches := numRegex.FindStringSubmatch(entry.Name())
+		if len(matches) > 1 {
+			if num, err := strconv.Atoi(matches[1]); err == nil && num > maxSeq {
+				maxSeq = num
+			}
 		}
-		slug = fmt.Sprintf("%s-%d", baseSlug, counter)
-		counter++
+	}
+
+	var filename string
+	var id string
+	if isLegacy {
+		// Legacy chapter naming: chapter-1-the-gathering.md
+		baseSlug := slug
+		counter := 1
+		id = baseSlug
+		for {
+			candidate := filepath.Join(dir, id+ext)
+			if _, err := os.Stat(candidate); os.IsNotExist(err) {
+				break
+			}
+			id = fmt.Sprintf("%s-%d", baseSlug, counter)
+			counter++
+		}
+		filename = id + ext
+	} else {
+		// New convention: 01_capitulo_1.txt
+		nextSeq := maxSeq + 1
+		id = fmt.Sprintf("%02d_%s", nextSeq, strings.ReplaceAll(slug, "-", "_"))
+		filename = id + ext
 	}
 
 	initialContent := fmt.Sprintf("# %s\n\n", title)
-	if err := r.SaveContent(slug, initialContent); err != nil {
+	targetPath := filepath.Join(dir, filename)
+	if err := os.WriteFile(targetPath, []byte(initialContent), 0644); err != nil {
 		return domain.Chapter{}, err
 	}
 
+	relDir := filepath.Base(dir)
 	return domain.Chapter{
-		ID:        slug,
+		ID:        id,
 		Title:     title,
-		FilePath:  filepath.Join("chapters", slug+".md"),
+		FilePath:  filepath.Join(relDir, filename),
 		WordCount: countWords(initialContent),
 		Content:   initialContent,
 	}, nil
