@@ -1,0 +1,22 @@
+version: 1
+files:
+    .env:
+        path: .env
+        sha256: 542874f30363d6d6dc0401dc4b88bb571d6ce5cb5a6bccd155d2c82a499112ac
+        origin: scaffold
+        template: common/env.tmpl
+    .go-arch.yaml:
+        path: .go-arch.yaml
+        sha256: f96ec823ec46489d8915cb1892a147a5ef25900c047ae3d19a96a5eabe23c04a
+        origin: scaffold
+        template: common/config.tmpl
+    cmd/api/main.go:
+        path: cmd/api/main.go
+        sha256: 4ef42b00171db8f082ab0137c971e13bc0e6ece4cf694fd74433540a892888bd
+        origin: scaffold
+        template: standard/main.tmpl
+    go.mod:
+        path: go.mod
+        sha256: 2484d33041ddb6a2dc99430b0af320d198fdf3467137c78b44ccd52091a3ab54
+        origin: scaffold
+        template: common/go.mod.tmpl

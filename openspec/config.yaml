@@ -1,0 +1,23 @@
+project: novel-tui
+go_module: github.com/SalvucciFacundo/novel-tui
+go_version: 1.24
+artifact_store: openspec
+strict_tdd: false
+test_runner: go test
+phases:
+  explore:
+    enabled: true
+  propose:
+    enabled: true
+  spec:
+    enabled: true
+  design:
+    enabled: true
+  tasks:
+    enabled: true
+  apply:
+    enabled: true
+  verify:
+    enabled: true
+  archive:
+    enabled: true
