@@ -100,6 +100,33 @@ func (m EditorModel) Update(msg tea.Msg) (EditorModel, tea.Cmd) {
 			m.Metrics.IsDirty = false
 		}
 
+	case tea.MouseMsg:
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			for i := 0; i < 3; i++ {
+				m.textarea.CursorUp()
+			}
+			return m, nil
+
+		case tea.MouseWheelDown:
+			for i := 0; i < 3; i++ {
+				m.textarea.CursorDown()
+			}
+			return m, nil
+
+		case tea.MouseLeft:
+			if !m.Focused {
+				m.Focused = true
+				cmds = append(cmds, m.textarea.Focus(), func() tea.Msg {
+					return messages.FocusMsg{Target: messages.FocusEditor}
+				})
+			}
+			var taCmd tea.Cmd
+			m.textarea, taCmd = m.textarea.Update(msg)
+			cmds = append(cmds, taCmd)
+			return m, tea.Batch(cmds...)
+		}
+
 	case tea.KeyMsg:
 		if key.Matches(msg, m.keys.Save) {
 			content := m.textarea.Value()

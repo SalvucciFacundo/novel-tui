@@ -32,7 +32,7 @@ func main() {
 	}
 
 	rootModel := model.NewRootModelWithConfig(configRepo, workspaceMgr, initialView, workspaceDir)
-	p := tea.NewProgram(rootModel, tea.WithAltScreen())
+	p := tea.NewProgram(rootModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error running novel-tui: %v\n", err)

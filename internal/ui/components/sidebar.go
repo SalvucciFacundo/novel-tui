@@ -153,6 +153,64 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 	case messages.FocusMsg:
 		m.Focused = (msg.Target == messages.FocusSidebar)
 
+	case tea.MouseMsg:
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			if m.ActiveTab == TabChapters {
+				if m.SelectedChapter > 0 {
+					m.SelectedChapter--
+				}
+			} else {
+				if m.SelectedChar > 0 {
+					m.SelectedChar--
+				}
+			}
+			return m, nil
+
+		case tea.MouseWheelDown:
+			if m.ActiveTab == TabChapters {
+				if m.SelectedChapter < len(m.Chapters)-1 {
+					m.SelectedChapter++
+				}
+			} else {
+				if m.SelectedChar < len(m.Characters)-1 {
+					m.SelectedChar++
+				}
+			}
+			return m, nil
+
+		case tea.MouseLeft:
+			m.Focused = true
+			if msg.Y <= 2 {
+				if msg.X <= 14 {
+					m.ActiveTab = TabChapters
+				} else {
+					m.ActiveTab = TabLore
+				}
+				return m, nil
+			}
+
+			if msg.Y >= 3 {
+				if m.ActiveTab == TabChapters {
+					chapIdx := (msg.Y - 3) / 2
+					if chapIdx >= 0 && chapIdx < len(m.Chapters) {
+						m.SelectedChapter = chapIdx
+						selected := m.Chapters[chapIdx]
+						return m, func() tea.Msg {
+							return messages.ChapterSelectedMsg{Chapter: selected}
+						}
+					}
+				} else {
+					charIdx := msg.Y - 3
+					if charIdx >= 0 && charIdx < len(m.Characters) {
+						m.SelectedChar = charIdx
+						return m, nil
+					}
+				}
+			}
+			return m, nil
+		}
+
 	case tea.KeyMsg:
 		if !m.Focused {
 			return m, nil

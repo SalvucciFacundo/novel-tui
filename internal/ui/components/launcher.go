@@ -78,11 +78,14 @@ func DefaultLauncherKeyMap() LauncherKeyMap {
 
 // LauncherModel manages the Home Dashboard view.
 type LauncherModel struct {
-	Novels       []domain.NovelMetadata
-	SelectedIndex int
-	RootDir      string
-	Notification string
+	Novels          []domain.NovelMetadata
+	SelectedIndex   int
+	RootDir         string
+	Notification    string
 	NotificationErr bool
+
+	lastClickTime  time.Time
+	lastClickIndex int
 
 	width  int
 	height int
@@ -90,14 +93,85 @@ type LauncherModel struct {
 	keys   LauncherKeyMap
 }
 
+type rect struct {
+	x, y, w, h int
+}
+
+func (m LauncherModel) calcLayout() (menuRect, novelsRect rect) {
+	contentWidth := m.width
+	if contentWidth <= 0 {
+		contentWidth = 80
+	}
+
+	novelsBoxWidth := 46
+	if contentWidth > 90 {
+		novelsBoxWidth = contentWidth - 44
+	}
+	columnsWidth := 38 + 1 + novelsBoxWidth
+
+	headerHeight := 9
+	notifHeight := 0
+	if m.Notification != "" {
+		notifHeight = 2
+	}
+
+	menuBoxHeight := 14
+	novelsBoxHeight := 4
+	if len(m.Novels) == 0 {
+		novelsBoxHeight += 2
+	} else {
+		novelsBoxHeight += len(m.Novels) * 2
+	}
+	columnsHeight := menuBoxHeight
+	if novelsBoxHeight > columnsHeight {
+		columnsHeight = novelsBoxHeight
+	}
+
+	totalW := columnsWidth
+	if 72 > totalW {
+		totalW = 72
+	}
+	totalH := headerHeight + notifHeight + columnsHeight
+
+	var startX, startY int
+	if m.width > 0 && m.height > 0 {
+		startX = (m.width - totalW) / 2
+		if startX < 0 {
+			startX = 0
+		}
+		startY = (m.height - totalH) / 2
+		if startY < 0 {
+			startY = 0
+		}
+	}
+
+	columnsX := startX + (totalW-columnsWidth)/2
+	columnsY := startY + headerHeight + notifHeight
+
+	menuRect = rect{
+		x: columnsX,
+		y: columnsY,
+		w: 38,
+		h: menuBoxHeight,
+	}
+	novelsRect = rect{
+		x: columnsX + 39,
+		y: columnsY,
+		w: novelsBoxWidth,
+		h: novelsBoxHeight,
+	}
+	return menuRect, novelsRect
+}
+
 // NewLauncherModel creates a new LauncherModel.
 func NewLauncherModel(styles theme.Styles) LauncherModel {
 	return LauncherModel{
-		Novels:        []domain.NovelMetadata{},
-		SelectedIndex: 0,
-		RootDir:       "~/Novelas",
-		styles:        styles,
-		keys:          DefaultLauncherKeyMap(),
+		Novels:         []domain.NovelMetadata{},
+		SelectedIndex:  0,
+		RootDir:        "~/Novelas",
+		lastClickIndex: -1,
+		styles:         styles,
+		keys:           DefaultLauncherKeyMap(),
 	}
 }
 
@@ -139,6 +213,98 @@ func (m LauncherModel) Update(msg tea.Msg) (LauncherModel, tea.Cmd) {
 		m.Notification = msg.Message
 		m.NotificationErr = msg.IsError
 		return m, nil
+
+	case tea.MouseMsg:
+		m.Notification = ""
+		switch msg.Type {
+		case tea.MouseWheelUp:
+			if m.SelectedIndex > 0 {
+				m.SelectedIndex--
+			}
+			return m, nil
+
+		case tea.MouseWheelDown:
+			if m.SelectedIndex < len(m.Novels)-1 {
+				m.SelectedIndex++
+			}
+			return m, nil
+
+		case tea.MouseLeft:
+			menuRect, novelsRect := m.calcLayout()
+
+			// Check click inside menuBox
+			if msg.X >= menuRect.x && msg.X < menuRect.x+menuRect.w &&
+				msg.Y >= menuRect.y && msg.Y < menuRect.y+menuRect.h {
+				buttonIdx := msg.Y - (menuRect.y + 4)
+				switch buttonIdx {
+				case 0: // [c] Continue
+					if len(m.Novels) > 0 {
+						mostRecent := m.Novels[0]
+						return m, func() tea.Msg {
+							return messages.OpenNovelMsg{Path: mostRecent.AbsolutePath}
+						}
+					}
+					m.Notification = "No se encontraron novelas recientes en el directorio"
+					m.NotificationErr = false
+					return m, nil
+				case 1: // [n] New Novel
+					return m, func() tea.Msg {
+						return messages.ShowModalMsg{
+							Purpose: messages.ModalPurposeNewNovel,
+							Title:   "Nueva Novela",
+							Prompt:  "Título de la nueva novela:",
+						}
+					}
+				case 2: // [o] Open Folder
+					return m, func() tea.Msg {
+						return messages.ShowModalMsg{
+							Purpose: messages.ModalPurposeOpenFolder,
+							Title:   "Abrir Carpeta de Novela",
+							Prompt:  "Ruta absoluta o relativa:",
+						}
+					}
+				case 3: // [l] LLM Config
+					return m, func() tea.Msg {
+						return messages.ChangeViewMsg{View: messages.ViewStateLLMConfig}
+					}
+				case 4: // [d] Root Dir
+					return m, func() tea.Msg {
+						return messages.ShowModalMsg{
+							Purpose:      messages.ModalPurposeSetRootDir,
+							Title:        "Configurar Directorio Raíz",
+							Prompt:       "Directorio base para novelas:",
+							InitialValue: m.RootDir,
+						}
+					}
+				case 5: // [q] Quit
+					return m, tea.Quit
+				}
+				return m, nil
+			}
+
+			// Check click inside novelsBox
+			if msg.X >= novelsRect.x && msg.X < novelsRect.x+novelsRect.w &&
+				msg.Y >= novelsRect.y && msg.Y < novelsRect.y+novelsRect.h {
+				if len(m.Novels) == 0 {
+					return m, nil
+				}
+				itemIdx := (msg.Y - (novelsRect.y + 4)) / 2
+				if itemIdx >= 0 && itemIdx < len(m.Novels) {
+					now := time.Now()
+					isDoubleClick := (m.lastClickIndex == itemIdx && now.Sub(m.lastClickTime) < 500*time.Millisecond) || m.SelectedIndex == itemIdx
+					if isDoubleClick {
+						selected := m.Novels[itemIdx]
+						return m, func() tea.Msg {
+							return messages.OpenNovelMsg{Path: selected.AbsolutePath}
+						}
+					}
+					m.SelectedIndex = itemIdx
+					m.lastClickIndex = itemIdx
+					m.lastClickTime = now
+				}
+				return m, nil
+			}
+		}
 
 	case tea.KeyMsg:
 		m.Notification = "" // Clear notification on user action

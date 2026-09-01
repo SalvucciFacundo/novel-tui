@@ -165,3 +165,75 @@ func TestRootModel_CreateNovelAndTransitionToEditor(t *testing.T) {
 		t.Errorf("expected Editor view, but still on Launcher")
 	}
 }
+
+func TestRootModel_MouseRouting(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "novel-tui-root-mouse-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateLauncher, "")
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	// 1. Mouse click in Launcher routes to launcher
+	// Click [l] (LLM Config) button
+	m, cmd := m.Update(tea.MouseMsg{
+		X:    15,
+		Y:    19,
+		Type: tea.MouseLeft,
+	})
+	if cmd != nil {
+		msg := cmd()
+		if viewMsg, ok := msg.(messages.ChangeViewMsg); ok {
+			m, _ = m.Update(viewMsg)
+		}
+	}
+	view := m.View()
+	if !strings.Contains(view, "Configuración de Inteligencia Artificial") {
+		t.Errorf("expected LLM config view after mouse click, got: %s", view)
+	}
+
+	// 2. Open modal and test modal mouse isolation
+	m, _ = m.Update(messages.ShowModalMsg{
+		Purpose: messages.ModalPurposeNewNovel,
+		Title:   "Modal Test",
+	})
+	m, _ = m.Update(tea.MouseMsg{
+		X:    50,
+		Y:    15,
+		Type: tea.MouseLeft,
+	})
+	modalView := m.View()
+	if !strings.Contains(modalView, "Modal Test") {
+		t.Errorf("expected modal still active")
+	}
+	m, _ = m.Update(messages.HideModalMsg{})
+
+	// 3. Switch to Editor view and test spatial routing
+	m, _ = m.Update(messages.ChangeViewMsg{View: messages.ViewStateEditor})
+	// Click in Sidebar area (X < 28)
+	m, _ = m.Update(tea.MouseMsg{
+		X:    10,
+		Y:    5,
+		Type: tea.MouseLeft,
+	})
+
+	// Click in Editor area (X >= 28)
+	m, _ = m.Update(tea.MouseMsg{
+		X:    50,
+		Y:    10,
+		Type: tea.MouseLeft,
+	})
+
+	// Click in StatusBar area (Y == 29)
+	m, _ = m.Update(tea.MouseMsg{
+		X:    50,
+		Y:    29,
+		Type: tea.MouseLeft,
+	})
+}

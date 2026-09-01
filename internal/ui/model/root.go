@@ -406,6 +406,66 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, func() tea.Msg { return messages.FocusMsg{Target: messages.FocusEditor} })
 		return m, tea.Batch(cmds...)
 
+	case messages.FocusMsg:
+		m.activeFocus = msg.Target
+		var sCmd, eCmd tea.Cmd
+		m.sidebar, sCmd = m.sidebar.Update(msg)
+		m.editor, eCmd = m.editor.Update(msg)
+		return m, tea.Batch(sCmd, eCmd)
+
+	case tea.MouseMsg:
+		// 1. Modal dialog intercepts mouse when active
+		if m.modal.Active {
+			var mCmd tea.Cmd
+			m.modal, mCmd = m.modal.Update(msg)
+			return m, mCmd
+		}
+
+		// 2. View-specific mouse routing
+		switch m.viewState {
+		case messages.ViewStateLauncher:
+			var lCmd tea.Cmd
+			m.launcher, lCmd = m.launcher.Update(msg)
+			return m, lCmd
+
+		case messages.ViewStateLLMConfig:
+			var cfgCmd tea.Cmd
+			m.llmConfig, cfgCmd = m.llmConfig.Update(msg)
+			return m, cfgCmd
+
+		case messages.ViewStateEditor:
+			if m.height > 0 && msg.Y >= m.height-1 {
+				var stCmd tea.Cmd
+				m.statusbar, stCmd = m.statusbar.Update(msg)
+				return m, stCmd
+			}
+
+			sidebarWidth := m.sidebar.Width
+			if sidebarWidth <= 0 {
+				sidebarWidth = SidebarDefaultWidth
+			}
+
+			if msg.X < sidebarWidth {
+				if msg.Type == tea.MouseLeft {
+					m.activeFocus = messages.FocusSidebar
+					m.editor.Focused = false
+				}
+				var sCmd tea.Cmd
+				m.sidebar, sCmd = m.sidebar.Update(msg)
+				return m, sCmd
+			} else {
+				if msg.Type == tea.MouseLeft {
+					m.activeFocus = messages.FocusEditor
+					m.sidebar.Focused = false
+				}
+				localMsg := msg
+				localMsg.X -= sidebarWidth
+				var eCmd tea.Cmd
+				m.editor, eCmd = m.editor.Update(localMsg)
+				return m, eCmd
+			}
+		}
+
 	case tea.KeyMsg:
 		// 1. Modal dialog intercepts keys when open
 		if m.modal.Active {

@@ -119,6 +119,14 @@ func (m ModalModel) Update(msg tea.Msg) (ModalModel, tea.Cmd) {
 		m.ErrorMsg = ""
 		m.input.Blur()
 		return m, nil
+
+	case tea.MouseMsg:
+		if msg.Type == tea.MouseLeft {
+			var tiCmd tea.Cmd
+			m.input, tiCmd = m.input.Update(msg)
+			return m, tiCmd
+		}
+		return m, nil
 	}
 
 	if !m.Active {
