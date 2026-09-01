@@ -261,3 +261,58 @@ The system MUST initialize Bubble Tea with `tea.WithAltScreen()` ensuring that a
 - WHEN view state transitions occur
 - THEN the entire terminal screen area MUST be re-rendered cleanly based on `tea.WindowSizeMsg` dimensions
 - AND no ghost characters or overlapping frames from previous views MUST remain visible.
+
+---
+
+### Requirement: Genre-Adaptive AI Writing Assistant and Agent Mode
+
+The system MUST support an integrated AI Writing Assistant with two operational modes (Assistant Chat and Autonomous Agent Co-Writer) that dynamically adapts its persona, vocabulary, pacing advice, and critique style based on the author's selected genre(s) for the novel.
+
+#### Scenario: Interactive AI Writing Chat Panel
+- GIVEN the Editor view is open with an active chapter
+- WHEN the user toggles the AI Chat drawer or panel (e.g. `Ctrl+A` or mouse click)
+- THEN a dedicated AI interaction panel MUST open alongside the editor without disrupting active writing
+- AND the user MUST be able to ask questions about plot structure, character consistency, scene pacing, and dialogue flow.
+
+#### Scenario: Genre-Adaptive Persona and Prompting
+- GIVEN the novel project has configured genre tags (e.g., Fantasía, Sci-Fi, Romance, Suspenso/Misterio, Peleas/Shonen, Psicológico)
+- WHEN the AI generates suggestions, feedback, or text continuations
+- THEN the system MUST inject specialized system instructions tailored to those genres (e.g., worldbuilding coherence and magic rules for Fantasy, high tension and sensory beats for Thriller, emotional depth and dialogue subtext for Romance, dynamic choreography and momentum for Action)
+- AND the AI MUST adopt the tone of an expert editor specialized in that specific literary domain.
+
+#### Scenario: Agent Mode (Context-Aware Autonomous Co-Writer)
+- GIVEN the AI panel is set to "Agent Mode"
+- WHEN the user requests an agent task (e.g., "Analizar coherencia del personaje Kuno", "Generar borrador de escena", "Sugerir 3 giros argumentales para el capítulo actual")
+- THEN the Agent MUST autonomously read the relevant project context:
+  - Current and previous chapter contents in `capitulos/*.txt`
+  - Character bios and lore in `personajes.json`
+  - Author outlines and scratchpad notes in `notas.txt`
+- AND produce structured, contextually aware responses incorporating historical lore and character traits.
+
+---
+
+### Requirement: Full Mouse Support and Interactive UI Navigation
+
+The system MUST support terminal mouse events (`tea.WithMouseCellMotion()` or standard click/scroll tracking) across all views (Launcher, Editor, Settings, and Modals) alongside existing keyboard shortcuts.
+
+#### Scenario: Mouse clicking in Sidebar and Launcher
+- GIVEN the Launcher or Editor sidebar is visible
+- WHEN the user clicks with the left mouse button on a novel card or chapter list item
+- THEN the clicked item MUST be selected immediately
+- AND a double-click (or single click on action buttons) MUST trigger opening the novel or loading the chapter into the editor.
+
+#### Scenario: Mouse clicking on Sidebar Tabs
+- GIVEN the Sidebar is displaying the tab header (`[Chapters]` / `[Lore / Characters]`)
+- WHEN the user clicks on a tab title
+- THEN the active tab MUST switch to the clicked tab without requiring keyboard hotkeys.
+
+#### Scenario: Mouse scroll wheel navigation
+- GIVEN the Editor textarea, Chapter list, or Recent Novels list has scrollable overflow
+- WHEN the user rotates the mouse wheel up or down over the respective component
+- THEN the view MUST scroll content smoothly up or down.
+
+#### Scenario: Mouse positioning in Text Editor
+- GIVEN the central Text Editor is focused
+- WHEN the user clicks on a specific character position inside the text area
+- THEN the text cursor MUST move to the clicked line and column.
+
