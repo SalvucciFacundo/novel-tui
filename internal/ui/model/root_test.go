@@ -14,6 +14,27 @@ import (
 	"github.com/SalvucciFacundo/novel-tui/internal/ui/model"
 )
 
+func TestRootModel_Init_NoPanicWhenNoInitialDir(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "novel-tui-init-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateLauncher, "")
+
+	// Init should not panic
+	cmd := root.Init()
+	if cmd != nil {
+		// Bubble tea batch command execution simulation
+		_ = cmd()
+	}
+}
+
 func TestRootModel_InitializationAndResizing(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "novel-tui-root-test-*")
 	if err != nil {

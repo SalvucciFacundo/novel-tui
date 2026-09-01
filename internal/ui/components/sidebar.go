@@ -97,14 +97,28 @@ func NewSidebarModel(
 
 // Init loads initial chapters and characters.
 func (m SidebarModel) Init() tea.Cmd {
+	if m.chapterRepo == nil && m.characterRepo == nil {
+		return nil
+	}
 	return m.ReloadDataCmd()
 }
 
 // ReloadDataCmd fetches chapters and characters from repositories.
 func (m *SidebarModel) ReloadDataCmd() tea.Cmd {
+	if m.chapterRepo == nil && m.characterRepo == nil {
+		return nil
+	}
+	chapterRepo := m.chapterRepo
+	characterRepo := m.characterRepo
 	return func() tea.Msg {
-		chapters, _ := m.chapterRepo.ListAll()
-		chars, _ := m.characterRepo.ListAll()
+		var chapters []domain.Chapter
+		var chars []domain.Character
+		if chapterRepo != nil {
+			chapters, _ = chapterRepo.ListAll()
+		}
+		if characterRepo != nil {
+			chars, _ = characterRepo.ListAll()
+		}
 		return dataLoadedMsg{chapters: chapters, characters: chars}
 	}
 }
