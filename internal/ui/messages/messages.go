@@ -134,6 +134,11 @@ type SaveCompletedMsg struct {
 // ReloadChaptersMsg triggers a reload of the chapter list from disk.
 type ReloadChaptersMsg struct{}
 
+// SelectSidebarTabMsg requests switching the active sidebar tab.
+type SelectSidebarTabMsg struct {
+	Tab int
+}
+
 // ToggleChatDrawerMsg requests opening or closing the LLM chat drawer.
 type ToggleChatDrawerMsg struct{}
 

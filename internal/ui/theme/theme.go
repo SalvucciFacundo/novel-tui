@@ -72,6 +72,14 @@ type Styles struct {
 	StatusDirty        lipgloss.Style
 	StatusMetrics      lipgloss.Style
 	StatusHint         lipgloss.Style
+	StatusCommandBadge lipgloss.Style
+
+	// Navbar styles
+	NavbarContainer lipgloss.Style
+	NavbarPill      lipgloss.Style
+	NavbarHomePill  lipgloss.Style
+	NavbarBreadcrumb lipgloss.Style
+	NavbarActionPill lipgloss.Style
 
 	// Warning view
 	WarningView lipgloss.Style
@@ -170,6 +178,36 @@ func NewStyles(p Palette) Styles {
 
 		StatusHint: lipgloss.NewStyle().
 			Foreground(p.Muted).
+			Padding(0, 1),
+
+		StatusCommandBadge: lipgloss.NewStyle().
+			Foreground(p.Foreground).
+			Background(p.Background).
+			Padding(0, 1),
+
+		NavbarContainer: lipgloss.NewStyle().
+			Background(p.CardBg).
+			Foreground(p.Foreground).
+			Height(1),
+
+		NavbarPill: lipgloss.NewStyle().
+			Foreground(p.Secondary).
+			Background(p.CardBg).
+			Padding(0, 1),
+
+		NavbarHomePill: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(p.Accent).
+			Background(p.Background).
+			Padding(0, 1),
+
+		NavbarBreadcrumb: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(p.Highlight),
+
+		NavbarActionPill: lipgloss.NewStyle().
+			Foreground(p.Foreground).
+			Background(p.Background).
 			Padding(0, 1),
 
 		WarningView: lipgloss.NewStyle().

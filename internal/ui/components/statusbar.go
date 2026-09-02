@@ -69,35 +69,44 @@ func (m StatusBarModel) View() string {
 		return ""
 	}
 
-	// Title badge
-	title := m.ChapterTitle
-	if len(title) > 28 {
-		title = title[:25] + "..."
+	// 1. Left Section: Styled command badges
+	badgeStyle := m.styles.StatusCommandBadge
+	badgeHome := badgeStyle.Render("[Ctrl+H: Inicio]")
+	badgeAI := badgeStyle.Render("[Ctrl+A: IA]")
+	badgeSave := badgeStyle.Render("[Ctrl+S: Guardar]")
+	badgeNew := badgeStyle.Render("[Ctrl+N: Nuevo Cap]")
+	badgeTab := badgeStyle.Render("[Tab: Panel]")
+
+	leftSection := lipgloss.JoinHorizontal(lipgloss.Center,
+		badgeHome, " ",
+		badgeAI, " ",
+		badgeSave, " ",
+		badgeNew, " ",
+		badgeTab,
+	)
+
+	// 2. Right Section: Metrics + Save badge
+	readingMins := m.Metrics.ReadingTime
+	if readingMins < 1 && m.Metrics.WordCount > 0 {
+		readingMins = 1
 	}
-	titlePill := m.styles.StatusTitle.Render(" " + title + " ")
-
-	// Save status badge
-	var savePill string
-	if m.Metrics.IsDirty {
-		savePill = m.styles.StatusDirty.Render("[Modified*]")
-	} else {
-		savePill = m.styles.StatusSaved.Render("[Saved]")
-	}
-
-	// Hotkey hints
-	hints := m.styles.StatusHint.Render("Tab: Switch | Ctrl+S: Save | n: New")
-
-	leftSection := lipgloss.JoinHorizontal(lipgloss.Center, titlePill, " ", savePill, "  ", hints)
-
-	// Metrics string
-	metricsStr := fmt.Sprintf("%d words | %d chars | %s",
+	metricsStr := fmt.Sprintf("%d palabras | %d caracteres | ~%d min",
 		m.Metrics.WordCount,
 		m.Metrics.CharCount,
-		service.FormatReadingTime(m.Metrics.ReadingTime),
+		readingMins,
 	)
-	rightSection := m.styles.StatusMetrics.Render(metricsStr + " ")
+	renderedMetrics := m.styles.StatusMetrics.Render(metricsStr)
 
-	// Sizing and spacing
+	var savePill string
+	if m.Metrics.IsDirty {
+		savePill = m.styles.StatusDirty.Render("[Modificado*]")
+	} else {
+		savePill = m.styles.StatusSaved.Render("[Guardado]")
+	}
+
+	rightSection := lipgloss.JoinHorizontal(lipgloss.Center, renderedMetrics, " ", savePill, " ")
+
+	// 3. Layout calculation
 	leftWidth := lipgloss.Width(leftSection)
 	rightWidth := lipgloss.Width(rightSection)
 

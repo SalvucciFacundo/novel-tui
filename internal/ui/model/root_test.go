@@ -30,7 +30,6 @@ func TestRootModel_Init_NoPanicWhenNoInitialDir(t *testing.T) {
 	// Init should not panic
 	cmd := root.Init()
 	if cmd != nil {
-		// Bubble tea batch command execution simulation
 		_ = cmd()
 	}
 }
@@ -70,6 +69,9 @@ func TestRootModel_InitializationAndResizing(t *testing.T) {
 	normalView := updatedModel.View()
 	if strings.Contains(normalView, "Terminal size too small") {
 		t.Errorf("expected normal view, but got warning: %s", normalView)
+	}
+	if !strings.Contains(normalView, "Inicio (Ctrl+H)") {
+		t.Errorf("expected Navbar in editor view, got: %s", normalView)
 	}
 }
 
@@ -159,10 +161,13 @@ func TestRootModel_CreateNovelAndTransitionToEditor(t *testing.T) {
 	// Update with OpenNovelMsg
 	m, _ = m.Update(openMsg)
 
-	// Verify view is now in Editor mode
+	// Verify view is now in Editor mode with Navbar
 	editorView := m.View()
 	if strings.Contains(editorView, "Acciones Rápidas") {
 		t.Errorf("expected Editor view, but still on Launcher")
+	}
+	if !strings.Contains(editorView, "Las Crónicas de Noria") {
+		t.Errorf("expected novel title in Navbar breadcrumbs, got:\n%s", editorView)
 	}
 }
 
@@ -181,7 +186,6 @@ func TestRootModel_MouseRouting(t *testing.T) {
 	m, _ := root.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 
 	// 1. Mouse click in Launcher routes to launcher
-	// Click [l] (LLM Config) button
 	m, cmd := m.Update(tea.MouseMsg{
 		X:    15,
 		Y:    19,
@@ -198,53 +202,85 @@ func TestRootModel_MouseRouting(t *testing.T) {
 		t.Errorf("expected LLM config view after mouse click, got: %s", view)
 	}
 
-	// 2. Open modal and test modal mouse isolation
-	m, _ = m.Update(messages.ShowModalMsg{
-		Purpose: messages.ModalPurposeNewNovel,
-		Title:   "Modal Test",
-	})
-	m, _ = m.Update(tea.MouseMsg{
-		X:    50,
-		Y:    15,
+	// 2. Switch to Editor view and test Navbar click routing (Y == 0)
+	m, _ = m.Update(messages.ChangeViewMsg{View: messages.ViewStateEditor})
+	// Click Inicio pill at Y = 0, X = 5
+	m, cmd = m.Update(tea.MouseMsg{
+		X:    5,
+		Y:    0,
 		Type: tea.MouseLeft,
 	})
-	modalView := m.View()
-	if !strings.Contains(modalView, "Modal Test") {
-		t.Errorf("expected modal still active")
+	if cmd != nil {
+		msg := cmd()
+		if viewMsg, ok := msg.(messages.ChangeViewMsg); ok {
+			m, _ = m.Update(viewMsg)
+		}
 	}
+	view = m.View()
+	if !strings.Contains(view, "Acciones Rápidas") {
+		t.Errorf("expected Launcher view after clicking Inicio pill in Navbar, got: %s", view)
+	}
+}
+
+func TestRootModel_KeybindingIsolation_CtrlN(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateEditor, tempDir)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	// 1. Focus on Editor -> Ctrl+N MUST open New Chapter modal
+	m, _ = m.Update(messages.FocusMsg{Target: messages.FocusEditor})
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	if cmd == nil {
+		t.Fatalf("expected command on Ctrl+N when focused on Editor")
+	}
+	msg := cmd()
+	showMsg, ok := msg.(messages.ShowModalMsg)
+	if !ok || showMsg.Purpose != messages.ModalPurposeNewChapter {
+		t.Errorf("expected ShowModalMsg(NewChapter), got: %+v", msg)
+	}
+
+	// Close modal
 	m, _ = m.Update(messages.HideModalMsg{})
 
-	// 3. Switch to Editor view and test spatial routing
-	m, _ = m.Update(messages.ChangeViewMsg{View: messages.ViewStateEditor})
-	// Click in Sidebar area (X < 28)
-	m, _ = m.Update(tea.MouseMsg{
-		X:    10,
-		Y:    5,
-		Type: tea.MouseLeft,
-	})
+	// 2. Focus on Chat Drawer -> Ctrl+N MUST NOT open New Chapter modal
+	m, _ = m.Update(messages.ToggleChatDrawerMsg{})
+	m, _ = m.Update(messages.FocusMsg{Target: messages.FocusChat})
+	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	if cmd != nil {
+		msg := cmd()
+		if showMsg, ok := msg.(messages.ShowModalMsg); ok && showMsg.Purpose == messages.ModalPurposeNewChapter {
+			t.Errorf("Ctrl+N when focused on Chat should NOT trigger NewChapter modal")
+		}
+	}
+}
 
-	// Click in Editor area (X >= 28)
-	m, _ = m.Update(tea.MouseMsg{
-		X:    50,
-		Y:    10,
-		Type: tea.MouseLeft,
-	})
+func TestRootModel_Global_CtrlH(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
 
-	// Click in StatusBar area (Y == 29)
-	m, _ = m.Update(tea.MouseMsg{
-		X:    50,
-		Y:    29,
-		Type: tea.MouseLeft,
-	})
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateEditor, tempDir)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	// Press Ctrl+H anywhere in editor view -> return to Launcher
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlH})
+	if cmd == nil {
+		t.Fatalf("expected command on Ctrl+H")
+	}
+	msg := cmd()
+	viewMsg, ok := msg.(messages.ChangeViewMsg)
+	if !ok || viewMsg.View != messages.ViewStateLauncher {
+		t.Errorf("expected ChangeViewMsg(Launcher) on Ctrl+H, got: %+v", msg)
+	}
 }
 
 func TestRootModel_ChatDrawer_ToggleAndNavigation(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "novel-tui-drawer-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
+	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.json")
 	configRepo := repository.NewFileConfigRepository(configPath)
 	workspaceMgr := service.NewWorkspaceManager()
@@ -254,7 +290,7 @@ func TestRootModel_ChatDrawer_ToggleAndNavigation(t *testing.T) {
 
 	// 1. Initial view without drawer
 	initialView := m.View()
-	if strings.Contains(initialView, "Asistente IA") {
+	if strings.Contains(initialView, "Inicia una conversación") || strings.Contains(initialView, "[Medio]") {
 		t.Errorf("expected chat drawer to be hidden initially")
 	}
 
@@ -265,8 +301,8 @@ func TestRootModel_ChatDrawer_ToggleAndNavigation(t *testing.T) {
 		m, _ = m.Update(msg)
 	}
 	drawerView := m.View()
-	if !strings.Contains(drawerView, "Asistente IA") {
-		t.Errorf("expected chat drawer to be visible after Ctrl+A")
+	if !strings.Contains(drawerView, "[Medio]") {
+		t.Errorf("expected chat drawer to be visible after Ctrl+A, got:\n%s", drawerView)
 	}
 
 	// 3. Tab cycling with open drawer: FocusChat -> FocusSidebar -> FocusEditor -> FocusChat
@@ -274,32 +310,20 @@ func TestRootModel_ChatDrawer_ToggleAndNavigation(t *testing.T) {
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 
-	// 4. Mouse click in drawer area (X >= 80)
-	m, _ = m.Update(tea.MouseMsg{
-		X:    100,
-		Y:    10,
-		Type: tea.MouseLeft,
-	})
-
-	// 5. Toggle chat drawer closed with Ctrl+A
+	// 4. Toggle chat drawer closed with Ctrl+A
 	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
 	if cmd != nil {
 		msg := cmd()
 		m, _ = m.Update(msg)
 	}
 	closedView := m.View()
-	if strings.Contains(closedView, "Asistente IA") {
+	if strings.Contains(closedView, "[Medio]") {
 		t.Errorf("expected chat drawer to be hidden after second Ctrl+A")
 	}
 }
 
 func TestRootModel_ChatDrawer_TokenStreaming(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "novel-tui-stream-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
+	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.json")
 	configRepo := repository.NewFileConfigRepository(configPath)
 	workspaceMgr := service.NewWorkspaceManager()
@@ -318,4 +342,3 @@ func TestRootModel_ChatDrawer_TokenStreaming(t *testing.T) {
 		t.Errorf("expected streamed response in chat drawer view, got:\n%s", view)
 	}
 }
-

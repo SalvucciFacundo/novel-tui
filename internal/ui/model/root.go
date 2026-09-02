@@ -88,6 +88,7 @@ type RootModel struct {
 	launcher   components.LauncherModel
 	llmConfig  components.LLMConfigModel
 	modal      components.ModalModel
+	navbar     components.NavbarModel
 	sidebar    components.SidebarModel
 	editor     components.EditorModel
 	statusbar  components.StatusBarModel
@@ -158,6 +159,7 @@ func NewRootModel(
 		launcher:      components.NewLauncherModel(styles),
 		llmConfig:     components.NewLLMConfigModel(styles),
 		modal:         components.NewModalModel(styles),
+		navbar:        components.NewNavbarModel(styles),
 		sidebar:       components.NewSidebarModel(chapterRepo, characterRepo, styles),
 		editor:        components.NewEditorModel(styles),
 		statusbar:     components.NewStatusBarModel(styles),
@@ -206,6 +208,7 @@ func NewRootModelWithConfig(
 		launcher:        components.NewLauncherModel(styles),
 		llmConfig:       components.NewLLMConfigModel(styles),
 		modal:           components.NewModalModel(styles),
+		navbar:          components.NewNavbarModel(styles),
 		sidebar:         components.NewSidebarModel(chapRepo, charRepo, styles),
 		editor:          components.NewEditorModel(styles),
 		statusbar:       components.NewStatusBarModel(styles),
@@ -219,6 +222,8 @@ func NewRootModelWithConfig(
 	m.llmConfig.SetConfig(cfg.LLM)
 	if initialDir != "" {
 		m.chatDrawer.SetNovelDir(initialDir)
+		m.sidebar.SetNovelPath(initialDir)
+		m.navbar.SetNovelTitle(filepath.Base(initialDir))
 	}
 	return m
 }
@@ -230,6 +235,7 @@ func (m RootModel) Init() tea.Cmd {
 		m.modal.Init(),
 		m.launcher.Init(),
 		m.llmConfig.Init(),
+		m.navbar.Init(),
 		m.sidebar.Init(),
 		m.editor.Init(),
 		m.statusbar.Init(),
@@ -318,6 +324,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		m.navbar.SetNovelTitle(meta.Title)
 		m.updateRecentNovels(meta.AbsolutePath)
 		return m, func() tea.Msg {
 			return messages.OpenNovelMsg{Path: meta.AbsolutePath}
@@ -348,6 +355,10 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		sCmd := m.sidebar.SetRepositories(chapRepo, charRepo)
 		cmds = append(cmds, sCmd)
 
+		m.sidebar.SetNovelPath(targetPath)
+		if m.navbar.NovelTitle == "" {
+			m.navbar.SetNovelTitle(filepath.Base(targetPath))
+		}
 		m.chatDrawer.SetNovelDir(targetPath)
 
 		m.viewState = messages.ViewStateEditor
@@ -433,6 +444,10 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case messages.ChapterSelectedMsg:
+		var navCmd tea.Cmd
+		m.navbar, navCmd = m.navbar.Update(msg)
+		cmds = append(cmds, navCmd)
+
 		var editorCmd tea.Cmd
 		m.editor, editorCmd = m.editor.Update(msg)
 		cmds = append(cmds, editorCmd)
@@ -441,6 +456,12 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusbar, statusCmd = m.statusbar.Update(msg)
 		cmds = append(cmds, statusCmd)
 
+		return m, tea.Batch(cmds...)
+
+	case messages.SelectSidebarTabMsg:
+		var sCmd tea.Cmd
+		m.sidebar, sCmd = m.sidebar.Update(msg)
+		cmds = append(cmds, sCmd)
 		return m, tea.Batch(cmds...)
 
 	case messages.ChapterCreatedMsg:
@@ -601,6 +622,12 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cfgCmd
 
 		case messages.ViewStateEditor:
+			if msg.Y == 0 {
+				var navCmd tea.Cmd
+				m.navbar, navCmd = m.navbar.Update(msg)
+				return m, navCmd
+			}
+
 			if m.height > 0 && msg.Y >= m.height-1 {
 				var stCmd tea.Cmd
 				m.statusbar, stCmd = m.statusbar.Update(msg)
@@ -613,6 +640,9 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			editorWidth := m.editor.Width
 
+			localMsg := msg
+			localMsg.Y -= 1 // Account for top navbar height (1)
+
 			if msg.X < sidebarWidth {
 				if msg.Type == tea.MouseLeft {
 					m.activeFocus = messages.FocusSidebar
@@ -620,7 +650,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.chatDrawer.Focused = false
 				}
 				var sCmd tea.Cmd
-				m.sidebar, sCmd = m.sidebar.Update(msg)
+				m.sidebar, sCmd = m.sidebar.Update(localMsg)
 				return m, sCmd
 			} else if !m.showChatDrawer || msg.X < sidebarWidth+editorWidth {
 				if msg.Type == tea.MouseLeft {
@@ -628,7 +658,6 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.sidebar.Focused = false
 					m.chatDrawer.Focused = false
 				}
-				localMsg := msg
 				localMsg.X -= sidebarWidth
 				var eCmd tea.Cmd
 				m.editor, eCmd = m.editor.Update(localMsg)
@@ -640,7 +669,6 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.editor.Focused = false
 					m.chatDrawer.Focused = true
 				}
-				localMsg := msg
 				localMsg.X -= (sidebarWidth + editorWidth)
 				var cCmd tea.Cmd
 				m.chatDrawer, cCmd = m.chatDrawer.Update(localMsg)
@@ -683,11 +711,13 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 
 			case key.Matches(msg, m.keys.NewChapter):
-				return m, func() tea.Msg {
-					return messages.ShowModalMsg{
-						Purpose: messages.ModalPurposeNewChapter,
-						Title:   "Nuevo Capítulo",
-						Prompt:  "Título del nuevo capítulo:",
+				if m.activeFocus != messages.FocusChat {
+					return m, func() tea.Msg {
+						return messages.ShowModalMsg{
+							Purpose: messages.ModalPurposeNewChapter,
+							Title:   "Nuevo Capítulo",
+							Prompt:  "Título del nuevo capítulo:",
+						}
 					}
 				}
 
@@ -766,16 +796,17 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Forward non-key messages to child components
-	var lCmd, cfgCmd, mCmd, sCmd, eCmd, cCmd, stCmd tea.Cmd
+	var lCmd, cfgCmd, mCmd, navCmd, sCmd, eCmd, cCmd, stCmd tea.Cmd
 	m.launcher, lCmd = m.launcher.Update(msg)
 	m.llmConfig, cfgCmd = m.llmConfig.Update(msg)
 	m.modal, mCmd = m.modal.Update(msg)
+	m.navbar, navCmd = m.navbar.Update(msg)
 	m.sidebar, sCmd = m.sidebar.Update(msg)
 	m.editor, eCmd = m.editor.Update(msg)
 	m.chatDrawer, cCmd = m.chatDrawer.Update(msg)
 	m.statusbar, stCmd = m.statusbar.Update(msg)
 
-	cmds = append(cmds, lCmd, cfgCmd, mCmd, sCmd, eCmd, cCmd, stCmd)
+	cmds = append(cmds, lCmd, cfgCmd, mCmd, navCmd, sCmd, eCmd, cCmd, stCmd)
 	return m, tea.Batch(cmds...)
 }
 
@@ -806,8 +837,15 @@ func (m *RootModel) recalculateLayout() {
 	m.launcher.SetSize(m.width, m.height)
 	m.llmConfig.SetSize(m.width, m.height)
 
+	navbarHeight := 1
 	statusHeight := 1
-	mainHeight := m.height - statusHeight
+	mainHeight := m.height - navbarHeight - statusHeight
+	if mainHeight < 5 {
+		mainHeight = 5
+	}
+
+	m.navbar.SetWidth(m.width)
+	m.statusbar.SetWidth(m.width)
 
 	if m.showChatDrawer {
 		var sidebarWidth, drawerWidth, editorWidth int
@@ -857,8 +895,6 @@ func (m *RootModel) recalculateLayout() {
 		m.sidebar.SetSize(sidebarWidth, mainHeight)
 		m.editor.SetSize(editorWidth, mainHeight)
 	}
-
-	m.statusbar.SetWidth(m.width)
 }
 
 // View renders the multi-view TUI with modal overlays.
@@ -887,6 +923,7 @@ func (m RootModel) View() string {
 		baseView = m.llmConfig.View()
 
 	case messages.ViewStateEditor:
+		navView := m.navbar.View()
 		sidebarView := m.sidebar.View()
 		editorView := m.editor.View()
 		var mainView string
@@ -897,7 +934,7 @@ func (m RootModel) View() string {
 			mainView = lipgloss.JoinHorizontal(lipgloss.Top, sidebarView, editorView)
 		}
 		statusView := m.statusbar.View()
-		baseView = lipgloss.JoinVertical(lipgloss.Left, mainView, statusView)
+		baseView = lipgloss.JoinVertical(lipgloss.Left, navView, mainView, statusView)
 	}
 
 	if m.modal.Active {

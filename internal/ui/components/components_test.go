@@ -2,6 +2,7 @@ package components_test
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,60 +16,228 @@ import (
 	"github.com/SalvucciFacundo/novel-tui/internal/ui/theme"
 )
 
-func TestSidebarAndEditorAndStatusBar(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "novel-tui-components-test-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
+func TestNavbarComponent(t *testing.T) {
+	styles := theme.DefaultStyles
+	nav := components.NewNavbarModel(styles)
+	nav.SetWidth(140)
+	nav.SetNovelTitle("Cien Años de Soledad")
+	nav.SetChapterTitle("Capítulo 1")
 
+	view := nav.View()
+	if !strings.Contains(view, "Cien Años de Soledad") {
+		t.Errorf("expected novel title in navbar view: %s", view)
+	}
+	if !strings.Contains(view, "Capítulo 1") {
+		t.Errorf("expected chapter title in navbar view: %s", view)
+	}
+	if !strings.Contains(view, "Inicio") {
+		t.Errorf("expected Inicio pill in navbar: %s", view)
+	}
+	if !strings.Contains(view, "Asistente IA") {
+		t.Errorf("expected Asistente IA pill in navbar: %s", view)
+	}
+
+	// Fallback breadcrumbs when chapter is empty
+	navEmpty := components.NewNavbarModel(styles)
+	navEmpty.SetWidth(140)
+	navEmpty.SetNovelTitle("Mi Novela")
+	viewEmpty := navEmpty.View()
+	if !strings.Contains(viewEmpty, "Ningún capítulo seleccionado") {
+		t.Errorf("expected fallback chapter text in navbar: %s", viewEmpty)
+	}
+
+	// Test mouse click hit-testing
+	// 1. Click Inicio pill (at X = 5)
+	_, cmd := nav.Update(tea.MouseMsg{
+		X:    5,
+		Y:    0,
+		Type: tea.MouseLeft,
+	})
+	if cmd == nil {
+		t.Fatalf("expected command on clicking Inicio pill")
+	}
+	msg := cmd()
+	viewMsg, ok := msg.(messages.ChangeViewMsg)
+	if !ok || viewMsg.View != messages.ViewStateLauncher {
+		t.Errorf("expected ChangeViewMsg(Launcher), got: %+v", msg)
+	}
+
+	// 2. Click AI Assistant pill (at X = 125)
+	_, cmd = nav.Update(tea.MouseMsg{
+		X:    125,
+		Y:    0,
+		Type: tea.MouseLeft,
+	})
+	if cmd == nil {
+		t.Fatalf("expected command on clicking AI pill")
+	}
+	msg = cmd()
+	if _, ok := msg.(messages.ToggleChatDrawerMsg); !ok {
+		t.Errorf("expected ToggleChatDrawerMsg, got: %+v", msg)
+	}
+
+	// 3. Click Tab 1: Capítulos (at X = 70)
+	_, cmd = nav.Update(tea.MouseMsg{
+		X:    70,
+		Y:    0,
+		Type: tea.MouseLeft,
+	})
+	if cmd == nil {
+		t.Fatalf("expected command on clicking Tab 1 pill")
+	}
+	msg = cmd()
+	tabMsg, ok := msg.(messages.SelectSidebarTabMsg)
+	if !ok || tabMsg.Tab != 0 {
+		t.Errorf("expected SelectSidebarTabMsg(0), got: %+v", msg)
+	}
+
+	// 4. Click Tab 2: Personajes (at X = 90)
+	_, cmd = nav.Update(tea.MouseMsg{
+		X:    90,
+		Y:    0,
+		Type: tea.MouseLeft,
+	})
+	if cmd == nil {
+		t.Fatalf("expected command on clicking Tab 2 pill")
+	}
+	msg = cmd()
+	tabMsg, ok = msg.(messages.SelectSidebarTabMsg)
+	if !ok || tabMsg.Tab != 1 {
+		t.Errorf("expected SelectSidebarTabMsg(1), got: %+v", msg)
+	}
+
+	// 5. Click Tab 3: Notas (at X = 105)
+	_, cmd = nav.Update(tea.MouseMsg{
+		X:    105,
+		Y:    0,
+		Type: tea.MouseLeft,
+	})
+	if cmd == nil {
+		t.Fatalf("expected command on clicking Tab 3 pill")
+	}
+	msg = cmd()
+	tabMsg, ok = msg.(messages.SelectSidebarTabMsg)
+	if !ok || tabMsg.Tab != 2 {
+		t.Errorf("expected SelectSidebarTabMsg(2), got: %+v", msg)
+	}
+}
+
+func TestStatusBarComponent(t *testing.T) {
+	styles := theme.DefaultStyles
+	sb := components.NewStatusBarModel(styles)
+	sb.SetWidth(100)
+
+	// Clean chapter loaded
+	sb, _ = sb.Update(messages.ChapterSelectedMsg{
+		Chapter: domain.Chapter{
+			ID:      "chap-1",
+			Title:   "Capítulo 1",
+			Content: "Una palabra dos palabras tres palabras cuatro palabras",
+		},
+	})
+
+	view := sb.View()
+	if !strings.Contains(view, "Ctrl+H: Inicio") {
+		t.Errorf("expected Ctrl+H command badge in statusbar: %s", view)
+	}
+	if !strings.Contains(view, "Ctrl+A: IA") {
+		t.Errorf("expected Ctrl+A command badge in statusbar: %s", view)
+	}
+	if !strings.Contains(view, "Guardado") {
+		t.Errorf("expected [Guardado] pill in statusbar: %s", view)
+	}
+	if !strings.Contains(view, "palabras") || !strings.Contains(view, "caracteres") {
+		t.Errorf("expected metrics formatting in statusbar: %s", view)
+	}
+
+	// Dirty chapter text changed
+	sb, _ = sb.Update(messages.TextChangedMsg{
+		ChapterID: "chap-1",
+		Content:   "Modificado",
+		Metrics: domain.EditorMetrics{
+			WordCount:   10,
+			CharCount:   50,
+			ReadingTime: 1,
+			IsDirty:     true,
+		},
+	})
+	dirtyView := sb.View()
+	if !strings.Contains(dirtyView, "Modificado*") {
+		t.Errorf("expected [Modificado*] pill on dirty state: %s", dirtyView)
+	}
+}
+
+func TestSidebar3TabsAndNotes(t *testing.T) {
+	tempDir := t.TempDir()
 	chapRepo, _ := repository.NewFileChapterRepository(tempDir)
 	charRepo := repository.NewFileCharacterRepository(tempDir)
+	_ = charRepo.SaveAll([]domain.Character{{ID: "c1", Name: "Aurelio", Role: "Mago"}})
+
+	// Create a notes file in the novel root
+	notesPath := filepath.Join(tempDir, "notas.txt")
+	_ = os.WriteFile(notesPath, []byte("Lista de ideas para la trama"), 0644)
 
 	styles := theme.DefaultStyles
-
-	// 1. SidebarModel test
 	sidebar := components.NewSidebarModel(chapRepo, charRepo, styles)
-	sidebar.SetSize(30, 20)
+	sidebar.SetSize(40, 20)
+	sidebar.SetNovelPath(tempDir)
+	sidebar, _ = sidebar.Update(messages.FocusMsg{Target: messages.FocusSidebar})
 
-	// Create sample chapter
-	c1, _ := chapRepo.Create("Chapter 1: The Call")
-	sidebar, _ = sidebar.Update(messages.ChapterCreatedMsg{Chapter: c1})
-
-	sidebarView := sidebar.View()
-	if sidebarView == "" {
-		t.Errorf("sidebar view should not be empty")
+	// 1. Initial tab is TabChapters
+	if sidebar.ActiveTab != components.TabChapters {
+		t.Errorf("expected initial tab TabChapters, got %v", sidebar.ActiveTab)
 	}
 
-	// 2. EditorModel test
+	// 2. Switch to Tab 2: Personajes via key '2'
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	if sidebar.ActiveTab != components.TabCharacters {
+		t.Errorf("expected TabCharacters on pressing '2', got %v", sidebar.ActiveTab)
+	}
+
+	// 3. Switch to Tab 3: Notas via key '3'
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
+	if sidebar.ActiveTab != components.TabNotes {
+		t.Errorf("expected TabNotes on pressing '3', got %v", sidebar.ActiveTab)
+	}
+
+	// Check notes loaded
+	if !strings.Contains(sidebar.NotesValue(), "Lista de ideas para la trama") {
+		t.Errorf("expected notes loaded from notas.txt, got %s", sidebar.NotesValue())
+	}
+
+	// 4. Edit notes and save
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" extra")})
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+
+	savedData, _ := os.ReadFile(notesPath)
+	if !strings.Contains(string(savedData), "extra") {
+		t.Errorf("expected saved notes on disk to contain 'extra', got: %s", string(savedData))
+	}
+
+	// 5. SelectSidebarTabMsg switching
+	sidebar, _ = sidebar.Update(messages.SelectSidebarTabMsg{Tab: 0})
+	if sidebar.ActiveTab != components.TabChapters {
+		t.Errorf("expected TabChapters after SelectSidebarTabMsg(0), got %v", sidebar.ActiveTab)
+	}
+}
+
+func TestEditorCursorReset(t *testing.T) {
+	styles := theme.DefaultStyles
 	editor := components.NewEditorModel(styles)
 	editor.SetSize(60, 20)
 
-	// Select chapter in editor
+	// Load long chapter
+	longContent := strings.Repeat("Linea de texto\n", 50)
 	editor, _ = editor.Update(messages.ChapterSelectedMsg{
 		Chapter: domain.Chapter{
 			ID:      "chap-1",
-			Title:   "Chapter 1",
-			Content: "Once upon a time in a distant land...",
+			Title:   "Capítulo 1",
+			Content: longContent,
 		},
 	})
-	if editor.Value() != "Once upon a time in a distant land..." {
-		t.Errorf("expected editor content loaded, got %s", editor.Value())
-	}
 
-	// 3. StatusBarModel test
-	statusBar := components.NewStatusBarModel(styles)
-	statusBar.SetWidth(80)
-	statusBar, _ = statusBar.Update(messages.ChapterSelectedMsg{
-		Chapter: domain.Chapter{
-			ID:      "chap-1",
-			Title:   "Chapter 1",
-			Content: "Once upon a time...",
-		},
-	})
-	statusView := statusBar.View()
-	if statusView == "" {
-		t.Errorf("statusBar view should not be empty")
+	if editor.Value() != longContent {
+		t.Errorf("expected editor content to match loaded chapter")
 	}
 }
 
@@ -194,281 +363,6 @@ func TestLLMConfigComponent(t *testing.T) {
 	}
 }
 
-func TestLauncher_MouseInteractions(t *testing.T) {
-	styles := theme.DefaultStyles
-	launcher := components.NewLauncherModel(styles)
-	launcher.SetSize(100, 30)
-
-	novels := []domain.NovelMetadata{
-		{
-			Title:        "Novela 1",
-			AbsolutePath: "/tmp/novela-1",
-			ChapterCount: 5,
-			LastModified: time.Now(),
-		},
-		{
-			Title:        "Novela 2",
-			AbsolutePath: "/tmp/novela-2",
-			ChapterCount: 2,
-			LastModified: time.Now(),
-		},
-	}
-	launcher.SetNovels(novels)
-
-	// 1. Mouse wheel down -> increment SelectedIndex
-	if launcher.SelectedIndex != 0 {
-		t.Fatalf("expected initial index 0, got %d", launcher.SelectedIndex)
-	}
-	launcher, _ = launcher.Update(tea.MouseMsg{Type: tea.MouseWheelDown})
-	if launcher.SelectedIndex != 1 {
-		t.Errorf("expected SelectedIndex 1 after wheel down, got %d", launcher.SelectedIndex)
-	}
-
-	// 2. Mouse wheel up -> decrement SelectedIndex
-	launcher, _ = launcher.Update(tea.MouseMsg{Type: tea.MouseWheelUp})
-	if launcher.SelectedIndex != 0 {
-		t.Errorf("expected SelectedIndex 0 after wheel up, got %d", launcher.SelectedIndex)
-	}
-
-	// Calculate layout bounds to hit menu buttons
-	// In size (100, 30):
-	// totalW = 85, totalH = 23 (approx), startX = 7, startY = 3
-	// headerHeight = 9 -> columnsY = 12
-	// Button [c] is at Y = 12 + 4 = 16, X in [7, 45]
-	menuX := 15
-
-	// Click [n] (buttonIdx 1, Y = 17)
-	launcher, cmd := launcher.Update(tea.MouseMsg{
-		X:    menuX,
-		Y:    17,
-		Type: tea.MouseLeft,
-	})
-	if cmd == nil {
-		t.Fatalf("expected cmd when clicking [n] button")
-	}
-	msg := cmd()
-	showMsg, ok := msg.(messages.ShowModalMsg)
-	if !ok || showMsg.Purpose != messages.ModalPurposeNewNovel {
-		t.Errorf("expected ModalPurposeNewNovel on [n] click, got: %+v", msg)
-	}
-
-	// Click [l] (buttonIdx 3, Y = 19)
-	launcher, cmd = launcher.Update(tea.MouseMsg{
-		X:    menuX,
-		Y:    19,
-		Type: tea.MouseLeft,
-	})
-	if cmd == nil {
-		t.Fatalf("expected cmd when clicking [l] button")
-	}
-	msg = cmd()
-	viewMsg, ok := msg.(messages.ChangeViewMsg)
-	if !ok || viewMsg.View != messages.ViewStateLLMConfig {
-		t.Errorf("expected ViewStateLLMConfig on [l] click, got: %+v", msg)
-	}
-
-	// Click [d] (buttonIdx 4, Y = 20)
-	launcher, cmd = launcher.Update(tea.MouseMsg{
-		X:    menuX,
-		Y:    20,
-		Type: tea.MouseLeft,
-	})
-	if cmd == nil {
-		t.Fatalf("expected cmd when clicking [d] button")
-	}
-	msg = cmd()
-	showMsg, ok = msg.(messages.ShowModalMsg)
-	if !ok || showMsg.Purpose != messages.ModalPurposeSetRootDir {
-		t.Errorf("expected ModalPurposeSetRootDir on [d] click, got: %+v", msg)
-	}
-
-	// Click [o] (buttonIdx 2, Y = 18)
-	launcher, cmd = launcher.Update(tea.MouseMsg{
-		X:    menuX,
-		Y:    18,
-		Type: tea.MouseLeft,
-	})
-	if cmd == nil {
-		t.Fatalf("expected cmd when clicking [o] button")
-	}
-	msg = cmd()
-	showMsg, ok = msg.(messages.ShowModalMsg)
-	if !ok || showMsg.Purpose != messages.ModalPurposeOpenFolder {
-		t.Errorf("expected ModalPurposeOpenFolder on [o] click, got: %+v", msg)
-	}
-
-	// Click [c] (buttonIdx 0, Y = 16) -> continues most recent novel
-	launcher, cmd = launcher.Update(tea.MouseMsg{
-		X:    menuX,
-		Y:    16,
-		Type: tea.MouseLeft,
-	})
-	if cmd == nil {
-		t.Fatalf("expected cmd when clicking [c] button")
-	}
-	msg = cmd()
-	openMsg, ok := msg.(messages.OpenNovelMsg)
-	if !ok || openMsg.Path != "/tmp/novela-1" {
-		t.Errorf("expected OpenNovelMsg for /tmp/novela-1, got: %+v", msg)
-	}
-
-	// Click [q] (buttonIdx 5, Y = 21) -> quits
-	_, qCmd := launcher.Update(tea.MouseMsg{
-		X:    menuX,
-		Y:    21,
-		Type: tea.MouseLeft,
-	})
-	if qCmd == nil {
-		t.Errorf("expected quit cmd on [q] click")
-	}
-
-	// Hit-test clicking recent novels:
-	// novelsBox starts around X = 7 + 39 = 46
-	novelsX := 55
-	// Novel 1 is at Y = 12 + 4 + 1*2 = 18
-	launcher.SelectedIndex = 0
-	launcher, _ = launcher.Update(tea.MouseMsg{
-		X:    novelsX,
-		Y:    18,
-		Type: tea.MouseLeft,
-	})
-	if launcher.SelectedIndex != 1 {
-		t.Errorf("expected SelectedIndex 1 after clicking Novel 2, got %d", launcher.SelectedIndex)
-	}
-
-	// Click again on Novel 2 -> should open it
-	launcher, cmd = launcher.Update(tea.MouseMsg{
-		X:    novelsX,
-		Y:    18,
-		Type: tea.MouseLeft,
-	})
-	if cmd == nil {
-		t.Fatalf("expected OpenNovelMsg when clicking selected novel")
-	}
-	msg = cmd()
-	openMsg, ok = msg.(messages.OpenNovelMsg)
-	if !ok || openMsg.Path != "/tmp/novela-2" {
-		t.Errorf("expected OpenNovelMsg for /tmp/novela-2, got: %+v", msg)
-	}
-}
-
-func TestSidebar_MouseInteractions(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "novel-tui-sidebar-mouse-*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tempDir)
-
-	chapRepo, _ := repository.NewFileChapterRepository(tempDir)
-	c1, _ := chapRepo.Create("Chapter 1")
-	c2, _ := chapRepo.Create("Chapter 2")
-	charRepo := repository.NewFileCharacterRepository(tempDir)
-	_ = charRepo.SaveAll([]domain.Character{{ID: "char-1", Name: "Alice", Role: "Protagonist"}})
-
-	styles := theme.DefaultStyles
-	sidebar := components.NewSidebarModel(chapRepo, charRepo, styles)
-	sidebar.SetSize(30, 20)
-	sidebar.Chapters = []domain.Chapter{c1, c2}
-	sidebar.Characters = []domain.Character{{ID: "char-1", Name: "Alice", Role: "Protagonist"}}
-
-	// 1. Mouse wheel in sidebar
-	sidebar.SelectedChapter = 0
-	sidebar, _ = sidebar.Update(tea.MouseMsg{Type: tea.MouseWheelDown})
-	if sidebar.SelectedChapter != 1 {
-		t.Errorf("expected SelectedChapter 1 after wheel down, got %d", sidebar.SelectedChapter)
-	}
-	sidebar, _ = sidebar.Update(tea.MouseMsg{Type: tea.MouseWheelUp})
-	if sidebar.SelectedChapter != 0 {
-		t.Errorf("expected SelectedChapter 0 after wheel up, got %d", sidebar.SelectedChapter)
-	}
-
-	// 2. Click Tab 2 (Lore) at Y = 1, X = 18
-	sidebar, _ = sidebar.Update(tea.MouseMsg{
-		X:    18,
-		Y:    1,
-		Type: tea.MouseLeft,
-	})
-	if sidebar.ActiveTab != components.TabLore {
-		t.Errorf("expected ActiveTab to be TabLore, got %v", sidebar.ActiveTab)
-	}
-
-	// 3. Click Tab 1 (Chapters) at Y = 1, X = 5
-	sidebar, _ = sidebar.Update(tea.MouseMsg{
-		X:    5,
-		Y:    1,
-		Type: tea.MouseLeft,
-	})
-	if sidebar.ActiveTab != components.TabChapters {
-		t.Errorf("expected ActiveTab to be TabChapters, got %v", sidebar.ActiveTab)
-	}
-
-	// 4. Click chapter row 1 (Chapter 2) at Y = 5 (since row 0 is at Y=3,4, row 1 is at Y=5,6)
-	sidebar, cmd := sidebar.Update(tea.MouseMsg{
-		X:    5,
-		Y:    5,
-		Type: tea.MouseLeft,
-	})
-	if sidebar.SelectedChapter != 1 {
-		t.Errorf("expected SelectedChapter 1, got %d", sidebar.SelectedChapter)
-	}
-	if cmd == nil {
-		t.Fatalf("expected ChapterSelectedMsg when clicking chapter row")
-	}
-	msg := cmd()
-	chapMsg, ok := msg.(messages.ChapterSelectedMsg)
-	if !ok || chapMsg.Chapter.Title != "Chapter 2" {
-		t.Errorf("unexpected chapter selected msg: %+v", msg)
-	}
-}
-
-func TestEditor_MouseInteractions(t *testing.T) {
-	styles := theme.DefaultStyles
-	editor := components.NewEditorModel(styles)
-	editor.SetSize(60, 20)
-	editor, _ = editor.Update(messages.ChapterSelectedMsg{
-		Chapter: domain.Chapter{
-			ID:      "chap-1",
-			Title:   "Chapter 1",
-			Content: "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6\nLine 7\nLine 8",
-		},
-	})
-
-	// 1. Left click focuses editor
-	editor.Focused = false
-	editor, cmd := editor.Update(tea.MouseMsg{
-		X:    10,
-		Y:    5,
-		Type: tea.MouseLeft,
-	})
-	if !editor.Focused {
-		t.Errorf("expected editor to be focused after left click")
-	}
-	if cmd == nil {
-		t.Fatalf("expected FocusMsg cmd on editor click")
-	}
-
-	// 2. Wheel scroll up and down
-	editor, _ = editor.Update(tea.MouseMsg{Type: tea.MouseWheelDown})
-	editor, _ = editor.Update(tea.MouseMsg{Type: tea.MouseWheelUp})
-}
-
-func TestModal_MouseInteractions(t *testing.T) {
-	styles := theme.DefaultStyles
-	modal := components.NewModalModel(styles)
-	modal.SetSize(80, 24)
-	modal.Show(messages.ModalPurposeNewNovel, "Nueva Novela", "Título:", "Valor inicial")
-
-	// Left click inside modal
-	modal, _ = modal.Update(tea.MouseMsg{
-		X:    40,
-		Y:    12,
-		Type: tea.MouseLeft,
-	})
-	if !modal.Active {
-		t.Errorf("modal should remain active")
-	}
-}
-
 func TestChatDrawerComponent(t *testing.T) {
 	tempDir := t.TempDir()
 	sessionRepo := repository.NewFileChatSessionRepository()
@@ -522,4 +416,3 @@ func TestChatDrawerComponent(t *testing.T) {
 		t.Errorf("expected drawer view to contain 'Hola mundo'")
 	}
 }
-

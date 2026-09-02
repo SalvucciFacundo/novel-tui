@@ -195,16 +195,27 @@ func (m ModalModel) View() string {
 		modalWidth = 30
 	}
 
+	innerWidth := modalWidth - 6
+	if innerWidth < 20 {
+		innerWidth = 20
+	}
+
+	cardBg := theme.CurrentTheme.CardBg
+
 	// 1. Title
 	titleStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(theme.CurrentTheme.Highlight).
+		Background(cardBg).
+		Width(innerWidth).
 		MarginBottom(1)
 	titleText := titleStyle.Render(m.Title)
 
 	// 2. Prompt
 	promptStyle := lipgloss.NewStyle().
 		Foreground(theme.CurrentTheme.Foreground).
+		Background(cardBg).
+		Width(innerWidth).
 		MarginBottom(1)
 	var promptText string
 	if m.Prompt != "" {
@@ -215,8 +226,9 @@ func (m ModalModel) View() string {
 	inputBoxStyle := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(theme.CurrentTheme.BorderFocused).
+		Background(cardBg).
 		Padding(0, 1).
-		Width(modalWidth - 6)
+		Width(innerWidth)
 	inputBox := inputBoxStyle.Render(m.input.View())
 
 	// 4. Error message if present
@@ -224,7 +236,9 @@ func (m ModalModel) View() string {
 	if m.ErrorMsg != "" {
 		errStyle := lipgloss.NewStyle().
 			Foreground(theme.CurrentTheme.Error).
+			Background(cardBg).
 			Bold(true).
+			Width(innerWidth).
 			MarginTop(1)
 		errBox = errStyle.Render("⚠ " + m.ErrorMsg)
 	}
@@ -232,6 +246,8 @@ func (m ModalModel) View() string {
 	// 5. Help / Footer hints
 	helpStyle := lipgloss.NewStyle().
 		Foreground(theme.CurrentTheme.Muted).
+		Background(cardBg).
+		Width(innerWidth).
 		MarginTop(1)
 	helpText := helpStyle.Render("[Enter] Confirmar   [Esc] Cancelar")
 
@@ -248,12 +264,13 @@ func (m ModalModel) View() string {
 	elements = append(elements, helpText)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, elements...)
+	content = lipgloss.NewStyle().Background(cardBg).Render(content)
 
 	// Outer card
 	cardStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(theme.CurrentTheme.BorderFocused).
-		Background(theme.CurrentTheme.CardBg).
+		Background(cardBg).
 		Padding(1, 2).
 		Width(modalWidth)
 

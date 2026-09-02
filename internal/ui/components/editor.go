@@ -83,6 +83,7 @@ func (m EditorModel) Update(msg tea.Msg) (EditorModel, tea.Cmd) {
 	case messages.ChapterSelectedMsg:
 		m.ActiveChapter = msg.Chapter
 		m.textarea.SetValue(msg.Chapter.Content)
+		m.textarea.CursorStart()
 		m.IsDirty = false
 		m.Metrics = service.CalculateMetrics(msg.Chapter.Content, false)
 
