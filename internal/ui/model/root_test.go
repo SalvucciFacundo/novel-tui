@@ -237,3 +237,85 @@ func TestRootModel_MouseRouting(t *testing.T) {
 		Type: tea.MouseLeft,
 	})
 }
+
+func TestRootModel_ChatDrawer_ToggleAndNavigation(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "novel-tui-drawer-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateEditor, tempDir)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	// 1. Initial view without drawer
+	initialView := m.View()
+	if strings.Contains(initialView, "Asistente IA") {
+		t.Errorf("expected chat drawer to be hidden initially")
+	}
+
+	// 2. Press Ctrl+A to toggle chat drawer open
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	if cmd != nil {
+		msg := cmd()
+		m, _ = m.Update(msg)
+	}
+	drawerView := m.View()
+	if !strings.Contains(drawerView, "Asistente IA") {
+		t.Errorf("expected chat drawer to be visible after Ctrl+A")
+	}
+
+	// 3. Tab cycling with open drawer: FocusChat -> FocusSidebar -> FocusEditor -> FocusChat
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+
+	// 4. Mouse click in drawer area (X >= 80)
+	m, _ = m.Update(tea.MouseMsg{
+		X:    100,
+		Y:    10,
+		Type: tea.MouseLeft,
+	})
+
+	// 5. Toggle chat drawer closed with Ctrl+A
+	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlA})
+	if cmd != nil {
+		msg := cmd()
+		m, _ = m.Update(msg)
+	}
+	closedView := m.View()
+	if strings.Contains(closedView, "Asistente IA") {
+		t.Errorf("expected chat drawer to be hidden after second Ctrl+A")
+	}
+}
+
+func TestRootModel_ChatDrawer_TokenStreaming(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "novel-tui-stream-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateEditor, tempDir)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m, _ = m.Update(messages.ToggleChatDrawerMsg{})
+
+	// Receive streaming tokens
+	m, _ = m.Update(messages.TokenReceivedMsg{Content: "Respuesta"})
+	m, _ = m.Update(messages.TokenReceivedMsg{Content: " generada"})
+	m, _ = m.Update(messages.StreamFinishedMsg{})
+
+	view := m.View()
+	if !strings.Contains(view, "Respuesta generada") {
+		t.Errorf("expected streamed response in chat drawer view, got:\n%s", view)
+	}
+}
+

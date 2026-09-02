@@ -32,18 +32,20 @@
   📁 Raíz: /home/kuno/Novelas  |  🤖 LLM: Ollama (qwen2.5:7b)  |  [Enter: Abrir]
 ```
 
-### Editor de Novela
+### Editor con Asistente IA (3 Paneles)
 
 ```text
-┌─ [Chapters] [Lore / Characters] ───────┬─ [Capítulo 01: El Comienzo] ──────────────┐
-│ > 01. El Comienzo                      │ El viento soplaba con fuerza sobre las    │
-│   02. Sombras en el Valle              │ colinas de piedra. Kuno observó la figura │
-│                                        │ que descendía lentamente hacia el sendero │
-│                                        │ iluminado por la luna...                  │
-│                                        │                                           │
-│                                        │                                           │
-│ [Ctrl+N / n: New Chapter]              │                                           │
-└────────────────────────────────────────┴─ [Capítulo 01] | 340 words | ~2 min read ─┘
+┌─ [Chapters] [Lore] ──────┬─ [Capítulo 01: El Comienzo] ─────────────┬─ [🤖 Asistente IA] [⚡ Bajo] ─┐
+│ > 01. El Comienzo        │ El viento soplaba con fuerza sobre las   │ 👤 Tú:                      │
+│   02. Sombras en Valle   │ colinas de piedra. Kuno observó la figura│ Sugerime una metáfora para  │
+│                          │ que descendía lentamente hacia el sendero│ la llegada de la niebla.    │
+│                          │ iluminado por la luna...                 │                             │
+│                          │                                          │ 🤖 IA:                      │
+│                          │                                          │ "La niebla reptaba como un  │
+│                          │                                          │ sudario blanco..."          │
+│                          │                                          ├─────────────────────────────┤
+│ [Ctrl+N: Nuevo Cap]      │                                          │ ❯ [Escribe tu consulta...]  │
+└──────────────────────────┴─ [Capítulo 01] | 340 words | ~2 min read ─┴─ [Ctrl+A: Toggle] ──────────┘
 ```
 
 ---
@@ -51,9 +53,16 @@
 ## ✨ Features
 
 - 🧘 **Distraction-Free Writing**: Terminal-native writing environment without heavy GUI bloat or complex configs.
-- 📚 **Chapter Management**: Dedicated sidebar for organizing, reordering, and switching chapters instantly.
+- 🤖 **AI Co-Writer & Agent Drawer (`Ctrl+A`)**: Integrated AI writing partner powered by local **Ollama**, **llama.cpp**, or remote OpenAI-compatible endpoints (OpenRouter, Groq, OpenAI).
+- 🧠 **Configurable Effort Levels**:
+  - **⚡ Bajo (Low):** Instant copy-edits, synonyms, and rapid dialogue punch-ups.
+  - **✍️ Medio (Medium):** Creative co-writing and scene continuations matching your genre's tone.
+  - **🧐 Alto / Razonamiento (High):** Deep plot-hole analysis, character arc audits, and causal consistency checks with automatic lore injection.
+- 💾 **Persistent Chat Sessions**: Full conversation histories stored per novel under `~/Novelas/<Novela>/chats/`.
+- 📚 **Chapter Management**: Dedicated sidebar for organizing, reordering, and switching chapters instantly (`.txt` files).
 - 👥 **Character & Worldbuilding Lore**: Integrated character cards (role, backstory, notes) viewable directly alongside the editor without losing your place.
 - ⏱️ **Real-Time Writing Metrics**: Live word count, character count, estimated reading time, and clean `[Saved]` / `[Modified*]` status indicators.
+- 🖱️ **Full Mouse Support**: Complete mouse click and scroll wheel interactions across launcher, tabs, lists, and editor.
 - 🛡️ **Atomic File Persistence**: Never lose your work. Chapters and character data are persisted safely on local disk using atomic file transactions.
 - 🎨 **Modern Terminal Aesthetics**: Styled with the Catppuccin palette via Lip Gloss, with clear focus indicators, responsive resizing, and small-screen safety guards.
 
@@ -125,10 +134,12 @@ sudo mv novel-tui /usr/local/bin/
 
 | Keybinding | Scope | Description |
 |---|---|---|
-| `Tab` | Global | Cycle focus forward (Sidebar ↔ Editor) |
-| `Shift + Tab` | Global | Cycle focus backward (Editor ↔ Sidebar) |
+| `Tab` | Global | Cycle focus forward (Sidebar ↔ Editor ↔ Chat Drawer) |
+| `Shift + Tab` | Global | Cycle focus backward |
+| `Ctrl + A` | Editor | Toggle AI Writing Assistant Drawer |
+| `Ctrl + H` | Editor | Return to Home / Launcher Dashboard |
 | `Ctrl + S` | Editor / Global | Save current chapter atomically to disk |
-| `Ctrl + N` / `n` | Sidebar (Chapters) | Create a new chapter |
+| `Ctrl + N` / `n` | Sidebar (Chapters) | Create a new chapter (opens name modal) |
 | `[` / `]` or `h` / `l` | Sidebar | Toggle sidebar tabs between **Chapters** and **Lore / Characters** |
 | `Up` / `Down` or `k` / `j` | Sidebar | Navigate chapters or character cards |
 | `Enter` | Sidebar (Chapters) | Open and load selected chapter into editor |

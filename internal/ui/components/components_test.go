@@ -468,3 +468,58 @@ func TestModal_MouseInteractions(t *testing.T) {
 		t.Errorf("modal should remain active")
 	}
 }
+
+func TestChatDrawerComponent(t *testing.T) {
+	tempDir := t.TempDir()
+	sessionRepo := repository.NewFileChatSessionRepository()
+	styles := theme.DefaultStyles
+
+	drawer := components.NewChatDrawerModel(sessionRepo, styles)
+	drawer.SetNovelDir(tempDir)
+	drawer.SetDimensions(40, 24)
+
+	// 1. Initial State
+	if drawer.EffortLevel() != domain.EffortMedium {
+		t.Errorf("expected default effort Medium, got %s", drawer.EffortLevel())
+	}
+
+	// 2. Effort Level Cycling
+	drawer.CycleEffortLevel()
+	if drawer.EffortLevel() != domain.EffortHigh {
+		t.Errorf("expected effort High after cycle, got %s", drawer.EffortLevel())
+	}
+	drawer.CycleEffortLevel()
+	if drawer.EffortLevel() != domain.EffortLow {
+		t.Errorf("expected effort Low after cycle, got %s", drawer.EffortLevel())
+	}
+
+	// 3. Focus Drawer
+	drawer, _ = drawer.Update(messages.FocusMsg{Target: messages.FocusChat})
+	if !drawer.Focused {
+		t.Errorf("expected drawer to be focused")
+	}
+
+	// 4. Token Streaming
+	drawer, _ = drawer.Update(messages.TokenReceivedMsg{Content: "Hola"})
+	drawer, _ = drawer.Update(messages.TokenReceivedMsg{Content: " mundo"})
+	drawer, _ = drawer.Update(messages.StreamFinishedMsg{})
+
+	sess := drawer.ActiveSession()
+	if len(sess.Messages) == 0 {
+		t.Fatalf("expected messages in active session")
+	}
+	lastMsg := sess.Messages[len(sess.Messages)-1]
+	if lastMsg.Role != "assistant" || lastMsg.Content != "Hola mundo" {
+		t.Errorf("expected assistant message 'Hola mundo', got '%s'", lastMsg.Content)
+	}
+
+	// 5. View rendering
+	view := drawer.View()
+	if !strings.Contains(view, "Asistente IA") && !strings.Contains(view, "Nueva Conversación") {
+		t.Errorf("expected drawer view to contain header, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Hola mundo") {
+		t.Errorf("expected drawer view to contain 'Hola mundo'")
+	}
+}
+

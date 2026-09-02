@@ -29,6 +29,7 @@ type FocusState int
 const (
 	FocusSidebar FocusState = iota
 	FocusEditor
+	FocusChat
 )
 
 // FocusMsg notifies components of focus changes.
@@ -132,3 +133,42 @@ type SaveCompletedMsg struct {
 
 // ReloadChaptersMsg triggers a reload of the chapter list from disk.
 type ReloadChaptersMsg struct{}
+
+// ToggleChatDrawerMsg requests opening or closing the LLM chat drawer.
+type ToggleChatDrawerMsg struct{}
+
+// SendChatMessageMsg requests sending a prompt to the LLM assistant.
+type SendChatMessageMsg struct {
+	Content     string
+	EffortLevel domain.LLMEffortLevel
+}
+
+// TokenReceivedMsg is emitted when a new token delta is received from the LLM stream.
+type TokenReceivedMsg struct {
+	Content string
+}
+
+// StreamTokenMsg is an alias for TokenReceivedMsg for compatibility.
+type StreamTokenMsg = TokenReceivedMsg
+
+// StreamFinishedMsg is emitted when LLM streaming concludes successfully.
+type StreamFinishedMsg struct{}
+
+// StreamErrorMsg is emitted when an error occurs during LLM streaming.
+type StreamErrorMsg struct {
+	Err error
+}
+
+// SelectSessionMsg requests switching to an existing chat session.
+type SelectSessionMsg struct {
+	SessionID string
+}
+
+// CreateSessionMsg requests creating a new blank chat session.
+type CreateSessionMsg struct{}
+
+// SetEffortLevelMsg requests updating the active LLM effort level.
+type SetEffortLevelMsg struct {
+	EffortLevel domain.LLMEffortLevel
+}
+
