@@ -862,19 +862,24 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		temp := llmCfg.Temperature
+		maxTokens := 1200
 		switch msg.EffortLevel {
 		case domain.EffortLow:
-			temp = 0.4
-		case domain.EffortHigh:
 			temp = 0.5
+			maxTokens = 400
 		case domain.EffortMedium:
-			temp = 0.7
+			temp = 0.75
+			maxTokens = 1200
+		case domain.EffortHigh:
+			temp = 0.85
+			maxTokens = 2500
 		}
 
 		chatReq := domain.ChatRequest{
 			Model:       llmCfg.Model,
 			Messages:    chatMsgs,
 			Temperature: temp,
+			MaxTokens:   maxTokens,
 		}
 
 		provider, err := llm.NewProvider(llmCfg)
