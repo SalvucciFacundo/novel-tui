@@ -16,8 +16,10 @@ import time
 
 SESSION_NAME = "novel-llm"
 GPU_TYPE = "T4"
-KOBOLD_URL = "https://github.com/LostRuins/koboldcpp/releases/download/v1.73/koboldcpp-linux-x64-cuda1200"
+KOBOLD_URL = "https://github.com/LostRuins/koboldcpp/releases/download/v1.78/koboldcpp-linux-x64-cuda1200"
 MODEL_URL = "https://huggingface.co/bartowski/Llama-3-8B-Stheno-v3.2-GGUF/resolve/main/Llama-3-8B-Stheno-v3.2-Q5_K_M.gguf"
+DRIVE_MODEL_DIR = "/content/drive/MyDrive/NovelTUI_Models"
+MODEL_FILENAME = "Llama-3-8B-Stheno-v3.2-Q5_K_M.gguf"
 
 CLOUDFLARE_REGEX = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com(?:/v1)?")
 
@@ -58,15 +60,37 @@ echo '[Colab] Preparing workspace...'
 mkdir -p /content/novel-llm
 cd /content/novel-llm
 
+# Attempt mounting Google Drive for persistent model caching
+python3 -c "
+try:
+    from google.colab import drive
+    drive.mount('/content/drive', force_remount=False)
+except Exception as e:
+    print('[Colab] Notice: Google Drive auto-mount skipped:', e)
+" 2>/dev/null || true
+
 if [ ! -f koboldcpp ]; then
     echo '[Colab] Downloading KoboldCpp CUDA binary...'
     curl -fLo koboldcpp '{KOBOLD_URL}'
     chmod +x koboldcpp
 fi
 
-if [ ! -f model.gguf ]; then
-    echo '[Colab] Downloading Llama-3-8B-Stheno-v3.2 model...'
-    curl -fLo model.gguf '{MODEL_URL}'
+# Check if model is cached in Google Drive
+if [ -d "/content/drive/MyDrive" ]; then
+    mkdir -p '{DRIVE_MODEL_DIR}'
+    if [ -f '{DRIVE_MODEL_DIR}/{MODEL_FILENAME}' ]; then
+        echo '[Colab] ⚡ Found existing model in Google Drive! Linking model...'
+        ln -sf '{DRIVE_MODEL_DIR}/{MODEL_FILENAME}' /content/novel-llm/model.gguf
+    else
+        echo '[Colab] Model not in Google Drive. Downloading directly to Drive for permanent caching...'
+        curl -fLo '{DRIVE_MODEL_DIR}/{MODEL_FILENAME}' '{MODEL_URL}'
+        ln -sf '{DRIVE_MODEL_DIR}/{MODEL_FILENAME}' /content/novel-llm/model.gguf
+    fi
+else
+    if [ ! -f model.gguf ]; then
+        echo '[Colab] Drive not available. Downloading model directly to VM disk...'
+        curl -fLo model.gguf '{MODEL_URL}'
+    fi
 fi
 
 echo '[Colab] Launching KoboldCpp with GPU layers and Cloudflare tunnel...'
