@@ -91,8 +91,9 @@ type RootModel struct {
 	workspaceMgr service.WorkspaceManager
 	config       *domain.AppConfig
 
-	activeNovelPath string
-	chapterRepo     domain.ChapterRepository
+	activeNovelPath     string
+	activeNovelSettings domain.NovelSettings
+	chapterRepo         domain.ChapterRepository
 	characterRepo   domain.CharacterRepository
 	sessionRepo     domain.ChatSessionRepository
 	brainRepo       domain.BrainRepository
@@ -150,6 +151,16 @@ func readStreamChunkCmd(ch <-chan domain.StreamChunk) tea.Cmd {
 	}
 }
 
+func defaultRootCommands() []domain.CommandItem {
+	return append(domain.DefaultCommands(), domain.CommandItem{
+		ID:          "configure_genres",
+		Title:       "Configurar Géneros y Clasificación de la Novela",
+		Category:    "Configuración",
+		Shortcut:    "g",
+		Description: "Configurar géneros, tropos R-18 y clasificación de la novela",
+	})
+}
+
 // NewRootModel constructs the RootModel with default repositories for backward compatibility and testing.
 func NewRootModel(
 	chapterRepo domain.ChapterRepository,
@@ -182,10 +193,12 @@ func NewRootModel(
 		editor:         components.NewEditorModel(styles),
 		statusbar:      components.NewStatusBarModel(styles),
 		chatDrawer:     components.NewChatDrawerModel(sessionRepo, styles),
+		activeNovelSettings: domain.DefaultNovelSettings(),
 		activeFocus:   messages.FocusSidebar,
 		styles:        styles,
 		keys:          DefaultRootKeyMap(),
 	}
+	m.commandPalette.SetCommands(defaultRootCommands())
 	if chapterRepo != nil {
 		m.searchService = service.NewSearchService(chapterRepo)
 		m.searchModal.SearchFunc = func(query string, caseSensitive bool) ([]domain.SearchMatch, error) {
@@ -242,9 +255,17 @@ func NewRootModelWithConfig(
 		editor:          components.NewEditorModel(styles),
 		statusbar:       components.NewStatusBarModel(styles),
 		chatDrawer:      components.NewChatDrawerModel(sessionRepo, styles),
+		activeNovelSettings: domain.DefaultNovelSettings(),
 		activeFocus:     messages.FocusSidebar,
 		styles:          styles,
 		keys:            DefaultRootKeyMap(),
+	}
+	m.commandPalette.SetCommands(defaultRootCommands())
+
+	if initialDir != "" && wsMgr != nil {
+		if settings, err := wsMgr.LoadNovelSettings(initialDir); err == nil {
+			m.activeNovelSettings = settings
+		}
 	}
 
 	if chapRepo != nil {
@@ -381,6 +402,16 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.activeNovelPath = targetPath
 		m.updateRecentNovels(targetPath)
+
+		if m.workspaceMgr != nil {
+			if settings, err := m.workspaceMgr.LoadNovelSettings(targetPath); err == nil {
+				m.activeNovelSettings = settings
+			} else {
+				m.activeNovelSettings = domain.DefaultNovelSettings()
+			}
+		} else {
+			m.activeNovelSettings = domain.DefaultNovelSettings()
+		}
 
 		chapRepo, err := repository.NewFileChapterRepository(targetPath)
 		if err != nil {
@@ -550,10 +581,48 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var sCmd tea.Cmd
 			m.sidebar, sCmd = m.sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
 			return m, sCmd
+		case "configure_genres":
+			if m.activeNovelPath != "" {
+				initialVal := ""
+				if len(m.activeNovelSettings.Genres) > 0 {
+					initialVal = strings.Join(m.activeNovelSettings.Genres, ", ")
+				}
+				m.modal.Show(messages.ModalPurposeConfigureGenres, "Configurar Géneros y Clasificación", "Géneros separados por coma (ej: isekai_harem_r18, yandere_obsession):", initialVal)
+			}
+			return m, nil
 		case "llm_config":
 			return m, func() tea.Msg {
 				return messages.ChangeViewMsg{View: messages.ViewStateLLMConfig}
 			}
+		}
+		return m, nil
+
+	case messages.SubmitModalMsg:
+		if msg.Purpose == messages.ModalPurposeConfigureGenres {
+			if m.activeNovelPath != "" {
+				raw := strings.TrimSpace(msg.Value)
+				var genres []string
+				if raw != "" {
+					parts := strings.Split(raw, ",")
+					for _, p := range parts {
+						p = strings.TrimSpace(p)
+						if p != "" {
+							genres = append(genres, p)
+						}
+					}
+				}
+				m.activeNovelSettings.Genres = genres
+				if m.workspaceMgr != nil {
+					_ = m.workspaceMgr.SaveNovelSettings(m.activeNovelPath, m.activeNovelSettings)
+				}
+				return m, func() tea.Msg {
+					return messages.NotificationMsg{
+						Message: "Géneros actualizados para la novela",
+						IsError: false,
+					}
+				}
+			}
+			return m, nil
 		}
 		return m, nil
 
@@ -739,6 +808,9 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		sysPrompt := builder.BuildContext(llm.ContextParams{
 			NovelDir:           m.activeNovelPath,
+			Genres:             m.activeNovelSettings.Genres,
+			Rating:             m.activeNovelSettings.Rating,
+			CustomPrompt:       m.activeNovelSettings.CustomPrompt,
 			GenrePrompt:        genrePrompt,
 			ActiveChapterTitle: m.editor.ActiveChapter.Title,
 			ActiveChapterText:  m.editor.Value(),

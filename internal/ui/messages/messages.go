@@ -17,10 +17,11 @@ const (
 type ModalPurpose string
 
 const (
-	ModalPurposeNewNovel   ModalPurpose = "new_novel"
-	ModalPurposeNewChapter ModalPurpose = "new_chapter"
-	ModalPurposeSetRootDir ModalPurpose = "set_root_dir"
-	ModalPurposeOpenFolder ModalPurpose = "open_folder"
+	ModalPurposeNewNovel        ModalPurpose = "new_novel"
+	ModalPurposeNewChapter      ModalPurpose = "new_chapter"
+	ModalPurposeSetRootDir      ModalPurpose = "set_root_dir"
+	ModalPurposeOpenFolder      ModalPurpose = "open_folder"
+	ModalPurposeConfigureGenres ModalPurpose = "configure_genres"
 )
 
 // FocusState represents which panel currently has keyboard focus.

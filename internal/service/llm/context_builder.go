@@ -32,7 +32,10 @@ func NewContextBuilder() *ContextBuilder {
 type ContextParams struct {
 	NovelDir           string
 	Genre              string
+	Genres             []string
+	Rating             domain.ContentRating
 	GenrePrompt        string
+	CustomPrompt       string
 	ActiveChapterTitle string
 	ActiveChapterText  string
 	EffortLevel        domain.LLMEffortLevel
@@ -43,8 +46,16 @@ type ContextParams struct {
 func (cb *ContextBuilder) BuildContext(params ContextParams) string {
 	var sb strings.Builder
 
-	// 1. Base Persona and Genre
-	if strings.TrimSpace(params.GenrePrompt) != "" {
+	// 1. Base Persona and Genre / Rating Layer
+	if len(params.Genres) > 0 || params.Rating != "" || strings.TrimSpace(params.CustomPrompt) != "" {
+		composed := domain.ComposeEditorPrompt(params.Rating, params.Genres, params.CustomPrompt)
+		sb.WriteString(composed)
+		sb.WriteString("\n\n")
+		if strings.TrimSpace(params.GenrePrompt) != "" {
+			sb.WriteString(strings.TrimSpace(params.GenrePrompt))
+			sb.WriteString("\n\n")
+		}
+	} else if strings.TrimSpace(params.GenrePrompt) != "" {
 		sb.WriteString(strings.TrimSpace(params.GenrePrompt))
 		sb.WriteString("\n\n")
 	} else if strings.TrimSpace(params.Genre) != "" {

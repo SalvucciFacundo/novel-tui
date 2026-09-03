@@ -840,6 +840,19 @@ func TestRootModel_CommandPalette_ExecuteCommands(t *testing.T) {
 		}
 	}
 
+	// Execute configure_genres
+	m, cmd = m.Update(messages.ExecuteCommandMsg{
+		Command: domain.CommandItem{ID: "configure_genres"},
+	})
+	if cmd != nil {
+		_ = cmd()
+	}
+	view = m.View()
+	if !strings.Contains(view, "Configurar Géneros y Clasificación") {
+		t.Errorf("expected configure genres modal after configure_genres command, got view: %s", view)
+	}
+	m, _ = m.Update(messages.HideModalMsg{})
+
 	// Execute unknown command ID (should not crash)
 	m, cmd = m.Update(messages.ExecuteCommandMsg{
 		Command: domain.CommandItem{ID: "unknown_future_command"},
@@ -852,6 +865,62 @@ func TestRootModel_CommandPalette_ExecuteCommands(t *testing.T) {
 	m, _ = m.Update(messages.OpenCommandPaletteMsg{})
 	m, _ = m.Update(tea.MouseMsg{X: 10, Y: 10, Type: tea.MouseLeft})
 }
+
+func TestRootModel_NovelSettings_LoadAndModalFlow(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	novelMeta, err := workspaceMgr.CreateNovel(tempDir, "Novela Isekai R18")
+	if err != nil {
+		t.Fatalf("failed to create novel: %v", err)
+	}
+
+	// Save custom initial settings
+	initialSettings := domain.NovelSettings{
+		Genres:       []string{"isekai_harem_r18", "yandere_obsession"},
+		Rating:       domain.RatingExplicit21,
+		CustomPrompt: "Instrucción de autor inicial",
+	}
+	if err := workspaceMgr.SaveNovelSettings(novelMeta.AbsolutePath, initialSettings); err != nil {
+		t.Fatalf("failed to save initial settings: %v", err)
+	}
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateLauncher, tempDir)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+
+	// 1. Open Novel
+	m, _ = m.Update(messages.OpenNovelMsg{Path: novelMeta.AbsolutePath})
+
+	// 2. Trigger configure_genres from Command Palette
+	m, cmd := m.Update(messages.ExecuteCommandMsg{
+		Command: domain.CommandItem{ID: "configure_genres"},
+	})
+	if cmd != nil {
+		_ = cmd()
+	}
+	view := m.View()
+	if !strings.Contains(view, "Configurar Géneros y Clasificación") {
+		t.Errorf("expected configure modal to be active, got view:\n%s", view)
+	}
+
+	// 3. Submit updated genres
+	m, _ = m.Update(messages.SubmitModalMsg{
+		Purpose: messages.ModalPurposeConfigureGenres,
+		Value:   "smut_explicit, monster_girls_r18",
+	})
+
+	// 4. Verify settings saved to disk
+	savedSettings, err := workspaceMgr.LoadNovelSettings(novelMeta.AbsolutePath)
+	if err != nil {
+		t.Fatalf("failed to load saved novel settings: %v", err)
+	}
+	if len(savedSettings.Genres) != 2 || savedSettings.Genres[0] != "smut_explicit" || savedSettings.Genres[1] != "monster_girls_r18" {
+		t.Errorf("expected updated genres [smut_explicit, monster_girls_r18], got %+v", savedSettings.Genres)
+	}
+}
+
 
 
 

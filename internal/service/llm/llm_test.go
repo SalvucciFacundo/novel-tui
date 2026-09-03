@@ -322,6 +322,46 @@ func TestContextBuilder_Truncation(t *testing.T) {
 	}
 }
 
+func TestContextBuilder_MultiGenreAndAdultRating(t *testing.T) {
+	builder := llm.NewContextBuilder()
+
+	// 1. Explicit R-18 with multi-genre & custom prompt
+	prompt := builder.BuildContext(llm.ContextParams{
+		Genres:       []string{"isekai_harem_r18", "yandere_obsession", "smut_explicit"},
+		Rating:       domain.RatingExplicit21,
+		CustomPrompt: "Enfócate en los celos de la heroína principal.",
+		EffortLevel:  domain.EffortHigh,
+	})
+
+	if !strings.Contains(prompt, "EXPLÍCITO +21 / R-18") {
+		t.Errorf("expected explicit R-18 rating directive in prompt, got:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Isekai & Harem R-18") {
+		t.Errorf("expected isekai harem directive in prompt")
+	}
+	if !strings.Contains(prompt, "Yandere & Obsesión Extrema") {
+		t.Errorf("expected yandere directive in prompt")
+	}
+	if !strings.Contains(prompt, "Smut & Ficción Sexual Explícita") {
+		t.Errorf("expected smut directive in prompt")
+	}
+	if !strings.Contains(prompt, "Enfócate en los celos de la heroína principal.") {
+		t.Errorf("expected custom prompt in context")
+	}
+
+	// 2. All Ages rating
+	allAgesPrompt := builder.BuildContext(llm.ContextParams{
+		Genres: []string{"high_fantasy"},
+		Rating: domain.RatingAllAges,
+	})
+	if !strings.Contains(allAgesPrompt, "TODOS LOS PÚBLICOS") {
+		t.Errorf("expected ALL AGES in prompt, got:\n%s", allAgesPrompt)
+	}
+	if !strings.Contains(allAgesPrompt, "Alta Fantasía") {
+		t.Errorf("expected High Fantasy in prompt")
+	}
+}
+
 func TestFactory(t *testing.T) {
 	p1, err := llm.NewProvider(domain.LLMConfig{
 		Provider: "ollama",

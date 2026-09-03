@@ -286,7 +286,21 @@ func TestModalComponent(t *testing.T) {
 	if !ok || createMsg.Title != "Mi Novela" {
 		t.Errorf("unexpected message from modal submit: %+v", msg)
 	}
+
+	// Test Modal with ModalPurposeConfigureGenres
+	modal.Show(messages.ModalPurposeConfigureGenres, "Configurar Géneros", "Géneros:", "")
+	modal, _ = modal.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("isekai_harem_r18, yandere_obsession")})
+	modal, cmd = modal.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("expected command on genres modal submit")
+	}
+	genericMsg := cmd()
+	submitMsg, ok := genericMsg.(messages.SubmitModalMsg)
+	if !ok || submitMsg.Purpose != messages.ModalPurposeConfigureGenres || submitMsg.Value != "isekai_harem_r18, yandere_obsession" {
+		t.Errorf("unexpected submit modal msg: %+v", genericMsg)
+	}
 }
+
 
 func TestLauncherComponent(t *testing.T) {
 	styles := theme.DefaultStyles

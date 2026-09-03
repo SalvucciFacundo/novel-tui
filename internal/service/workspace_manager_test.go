@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/SalvucciFacundo/novel-tui/internal/domain"
 	"github.com/SalvucciFacundo/novel-tui/internal/service"
 )
 
@@ -158,3 +159,66 @@ func TestWorkspaceManager_CreateChapter(t *testing.T) {
 		t.Errorf("expected chapter 3 filename to start with 03_, got %s", filepath.Base(chap3Path))
 	}
 }
+
+func TestWorkspaceManager_NovelSettings(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "novel-tui-settings-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	wm := service.NewWorkspaceManager()
+	meta, err := wm.CreateNovel(tempDir, "Novela R18")
+	if err != nil {
+		t.Fatalf("CreateNovel failed: %v", err)
+	}
+
+	// 1. Initial settings on new novel should load defaults
+	settings, err := wm.LoadNovelSettings(meta.AbsolutePath)
+	if err != nil {
+		t.Fatalf("LoadNovelSettings failed on fresh novel: %v", err)
+	}
+	if settings.Rating != domain.RatingTeen {
+		t.Errorf("expected default rating %q, got %q", domain.RatingTeen, settings.Rating)
+	}
+
+	// 2. Save modified settings with R-18 and tropes
+	newSettings := domain.NovelSettings{
+		Genres:       []string{"isekai_harem_r18", "yandere_obsession", "smut_explicit"},
+		Rating:       domain.RatingExplicit21,
+		CustomPrompt: "No censures detalles íntimos.",
+	}
+
+	err = wm.SaveNovelSettings(meta.AbsolutePath, newSettings)
+	if err != nil {
+		t.Fatalf("SaveNovelSettings failed: %v", err)
+	}
+
+	// 3. Load back and verify persistence
+	loaded, err := wm.LoadNovelSettings(meta.AbsolutePath)
+	if err != nil {
+		t.Fatalf("LoadNovelSettings failed after save: %v", err)
+	}
+	if loaded.Rating != domain.RatingExplicit21 {
+		t.Errorf("expected rating %q, got %q", domain.RatingExplicit21, loaded.Rating)
+	}
+	if len(loaded.Genres) != 3 || loaded.Genres[0] != "isekai_harem_r18" {
+		t.Errorf("genres mismatch: %+v", loaded.Genres)
+	}
+	if loaded.CustomPrompt != "No censures detalles íntimos." {
+		t.Errorf("custom prompt mismatch: %q", loaded.CustomPrompt)
+	}
+
+	// 4. Corrupt novel.json should fallback to defaults without error
+	corruptPath := filepath.Join(meta.AbsolutePath, "novel.json")
+	_ = os.WriteFile(corruptPath, []byte("{invalid-json"), 0644)
+	fallbackSettings, err := wm.LoadNovelSettings(meta.AbsolutePath)
+	if err != nil {
+		t.Fatalf("expected fallback settings without fatal error on corrupt json: %v", err)
+	}
+	if fallbackSettings.Rating != domain.RatingTeen {
+		t.Errorf("expected default rating %q on fallback, got %q", domain.RatingTeen, fallbackSettings.Rating)
+	}
+}
+
+

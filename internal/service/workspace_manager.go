@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -30,6 +31,8 @@ type WorkspaceManager interface {
 	ListRecentNovels(rootDir string) ([]domain.NovelMetadata, error)
 	CreateNovel(rootDir, title string) (*domain.NovelMetadata, error)
 	CreateChapter(novelDir, chapterTitle string) (string, error)
+	SaveNovelSettings(novelDir string, settings domain.NovelSettings) error
+	LoadNovelSettings(novelDir string) (domain.NovelSettings, error)
 }
 
 // DefaultWorkspaceManager implements WorkspaceManager.
@@ -202,6 +205,11 @@ func (m *DefaultWorkspaceManager) CreateNovel(rootDir, title string) (*domain.No
 		return nil, fmt.Errorf("failed to create notas.txt: %w", err)
 	}
 
+	// Starter novel.json settings
+	if err := m.SaveNovelSettings(novelDir, domain.DefaultNovelSettings()); err != nil {
+		return nil, fmt.Errorf("failed to create novel.json: %w", err)
+	}
+
 	return &domain.NovelMetadata{
 		Title:        trimmedTitle,
 		AbsolutePath: novelDir,
@@ -272,4 +280,51 @@ func (m *DefaultWorkspaceManager) CreateChapter(novelDir, chapterTitle string) (
 	}
 
 	return chapterPath, nil
+}
+
+// SaveNovelSettings writes novel-specific settings to novel.json in the novel's root directory.
+func (m *DefaultWorkspaceManager) SaveNovelSettings(novelDir string, settings domain.NovelSettings) error {
+	resolved := repository.ExpandHome(novelDir)
+	if _, err := os.Stat(resolved); os.IsNotExist(err) {
+		return ErrNovelNotFound
+	}
+
+	path := filepath.Join(resolved, "novel.json")
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to serialize novel settings: %w", err)
+	}
+
+	return os.WriteFile(path, append(data, '\n'), 0644)
+}
+
+// LoadNovelSettings reads novel-specific settings from novel.json, returning defaults if not found.
+func (m *DefaultWorkspaceManager) LoadNovelSettings(novelDir string) (domain.NovelSettings, error) {
+	resolved := repository.ExpandHome(novelDir)
+	if _, err := os.Stat(resolved); os.IsNotExist(err) {
+		return domain.DefaultNovelSettings(), ErrNovelNotFound
+	}
+
+	path := filepath.Join(resolved, "novel.json")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return domain.DefaultNovelSettings(), nil
+	}
+	if err != nil {
+		return domain.DefaultNovelSettings(), fmt.Errorf("failed to read novel.json: %w", err)
+	}
+
+	var settings domain.NovelSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return domain.DefaultNovelSettings(), nil
+	}
+
+	if settings.Rating == "" {
+		settings.Rating = domain.RatingTeen
+	}
+	if settings.Genres == nil {
+		settings.Genres = []string{}
+	}
+
+	return settings, nil
 }
