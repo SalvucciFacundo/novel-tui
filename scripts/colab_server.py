@@ -17,9 +17,9 @@ import time
 SESSION_NAME = "novel-llm"
 GPU_TYPE = "T4"
 KOBOLD_URL = "https://github.com/LostRuins/koboldcpp/releases/download/v1.78/koboldcpp-linux-x64-cuda1200"
-MODEL_URL = "https://huggingface.co/bartowski/Llama-3-8B-Stheno-v3.2-GGUF/resolve/main/Llama-3-8B-Stheno-v3.2-Q5_K_M.gguf"
+MODEL_URL = "https://huggingface.co/bartowski/L3-8B-Stheno-v3.2-GGUF/resolve/main/L3-8B-Stheno-v3.2-Q5_K_M.gguf"
 DRIVE_MODEL_DIR = "/content/drive/MyDrive/NovelTUI_Models"
-MODEL_FILENAME = "Llama-3-8B-Stheno-v3.2-Q5_K_M.gguf"
+MODEL_FILENAME = "L3-8B-Stheno-v3.2-Q5_K_M.gguf"
 
 CLOUDFLARE_REGEX = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com(?:/v1)?")
 
