@@ -35,25 +35,51 @@ func TestBrainFactJSONSerialization(t *testing.T) {
 	}
 }
 
-func TestSessionSummaryJSONSerialization(t *testing.T) {
-	summary := domain.SessionSummary{
-		ID:         "sum-1",
-		Summary:    "Avance en el capítulo 2",
-		Highlights: []string{"Aparición del mentor", "Revelación de la profecía"},
-		CreatedAt:  time.Now(),
+func TestTimelineEventJSONSerialization(t *testing.T) {
+	now := time.Now()
+	event := domain.TimelineEvent{
+		ID:                 "tl-1",
+		ChronologicalOrder: 1,
+		Period:             "Era Antigua",
+		Title:              "Forja de la Espada del Alba",
+		Description:        "Los primeros artesanos forjan la espada con fuego sagrado",
+		Characters:         []string{"Aurelio", "Kuno"},
+		ChapterID:          "cap-0",
+		CreatedAt:          now,
 	}
 
-	data, err := json.Marshal(summary)
+	data, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("unexpected marshal error: %v", err)
 	}
 
-	var parsed domain.SessionSummary
+	var parsed domain.TimelineEvent
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		t.Fatalf("unexpected unmarshal error: %v", err)
 	}
 
-	if parsed.ID != summary.ID || len(parsed.Highlights) != 2 {
-		t.Errorf("expected summary match, got %+v", parsed)
+	if parsed.ID != event.ID || parsed.ChronologicalOrder != 1 || parsed.Period != "Era Antigua" {
+		t.Errorf("expected event match, got %+v", parsed)
+	}
+	if len(parsed.Characters) != 2 || parsed.Characters[0] != "Aurelio" {
+		t.Errorf("expected characters match, got %+v", parsed.Characters)
+	}
+
+	// Triangulation: minimal event without optional fields
+	minEvent := domain.TimelineEvent{
+		Title:       "Evento sin detalles",
+		Description: "Breve descripción",
+	}
+	minData, err := json.Marshal(minEvent)
+	if err != nil {
+		t.Fatalf("unexpected marshal error on minimal event: %v", err)
+	}
+	var minParsed domain.TimelineEvent
+	if err := json.Unmarshal(minData, &minParsed); err != nil {
+		t.Fatalf("unexpected unmarshal error on minimal event: %v", err)
+	}
+	if minParsed.Title != "Evento sin detalles" || len(minParsed.Characters) != 0 {
+		t.Errorf("expected minimal event match, got %+v", minParsed)
 	}
 }
+

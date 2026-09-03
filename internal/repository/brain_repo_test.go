@@ -158,4 +158,129 @@ func TestSQLiteBrainRepository_Lifecycle(t *testing.T) {
 	if len(summaries) != 1 || summaries[0].ID != "s1" || len(summaries[0].Highlights) != 2 {
 		t.Errorf("expected 1 summary with 2 highlights, got %+v", summaries)
 	}
+
+	// 10. Timeline Events
+	event1 := domain.TimelineEvent{
+		ID:                 "tl-1",
+		ChronologicalOrder: 2,
+		Period:             "Capítulo 1",
+		Title:              "Llegada al Valle",
+		Description:        "Kuno llega al valle de piedra en busca del sabio",
+		Characters:         []string{"Kuno"},
+		ChapterID:          "01",
+		CreatedAt:          time.Now(),
+	}
+
+	if err := repo.SaveTimelineEvent(ctx, event1); err != nil {
+		t.Fatalf("SaveTimelineEvent failed: %v", err)
+	}
+
+	batchEvents := []domain.TimelineEvent{
+		{
+			ID:                 "tl-0",
+			ChronologicalOrder: 1,
+			Period:             "Era Antigua",
+			Title:              "Forja de la Espada",
+			Description:        "Creación del arma legendaria",
+			Characters:         []string{"Aurelio"},
+			ChapterID:          "00",
+			CreatedAt:          time.Now().Add(-1 * time.Hour),
+		},
+		{
+			ID:                 "tl-2",
+			ChronologicalOrder: 3,
+			Period:             "Capítulo 2",
+			Title:              "Enfrentamiento en las Colinas",
+			Description:        "Batalla contra las criaturas oscuras",
+			Characters:         []string{"Kuno", "Elena"},
+			ChapterID:          "02",
+			CreatedAt:          time.Now(),
+		},
+	}
+
+	if err := repo.SaveTimelineEvents(ctx, batchEvents); err != nil {
+		t.Fatalf("SaveTimelineEvents failed: %v", err)
+	}
+
+	// List ordered by ChronologicalOrder ASC
+	events, err := repo.ListTimelineEvents(ctx)
+	if err != nil {
+		t.Fatalf("ListTimelineEvents failed: %v", err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("expected 3 timeline events, got %d", len(events))
+	}
+	if events[0].ID != "tl-0" || events[1].ID != "tl-1" || events[2].ID != "tl-2" {
+		t.Errorf("expected events ordered by chronological order [tl-0, tl-1, tl-2], got [%s, %s, %s]",
+			events[0].ID, events[1].ID, events[2].ID)
+	}
+	if len(events[2].Characters) != 2 || events[2].Characters[1] != "Elena" {
+		t.Errorf("expected characters in event 2, got %+v", events[2].Characters)
+	}
+
+	// Update timeline event (upsert)
+	event1Updated := event1
+	event1Updated.Title = "Llegada al Valle y Encuentro con Elena"
+	event1Updated.Characters = []string{"Kuno", "Elena"}
+	if err := repo.SaveTimelineEvent(ctx, event1Updated); err != nil {
+		t.Fatalf("SaveTimelineEvent update failed: %v", err)
+	}
+
+	eventsAfterUpdate, err := repo.ListTimelineEvents(ctx)
+	if err != nil {
+		t.Fatalf("ListTimelineEvents after update failed: %v", err)
+	}
+	if len(eventsAfterUpdate) != 3 {
+		t.Errorf("expected 3 events after update, got %d", len(eventsAfterUpdate))
+	}
+	if eventsAfterUpdate[1].Title != "Llegada al Valle y Encuentro con Elena" {
+		t.Errorf("expected updated title, got %s", eventsAfterUpdate[1].Title)
+	}
+
+	// Delete timeline event
+	if err := repo.DeleteTimelineEvent(ctx, "tl-0"); err != nil {
+		t.Fatalf("DeleteTimelineEvent failed: %v", err)
+	}
+
+	eventsAfterDelete, err := repo.ListTimelineEvents(ctx)
+	if err != nil {
+		t.Fatalf("ListTimelineEvents after delete failed: %v", err)
+	}
+	if len(eventsAfterDelete) != 2 {
+		t.Fatalf("expected 2 events after delete, got %d", len(eventsAfterDelete))
+	}
+	// Triangulation: Save empty slice returns nil
+	if err := repo.SaveTimelineEvents(ctx, []domain.TimelineEvent{}); err != nil {
+		t.Errorf("expected nil on saving empty events slice, got: %v", err)
+	}
+
+	// Triangulation: Auto-generated ID and CreatedAt when omitted
+	autoEvent := domain.TimelineEvent{
+		ChronologicalOrder: 99,
+		Title:              "Evento Futuro",
+		Description:        "Profecía no cumplida",
+	}
+	if err := repo.SaveTimelineEvent(ctx, autoEvent); err != nil {
+		t.Fatalf("SaveTimelineEvent auto failed: %v", err)
+	}
+	allAfterAuto, err := repo.ListTimelineEvents(ctx)
+	if err != nil {
+		t.Fatalf("ListTimelineEvents failed: %v", err)
+	}
+	foundAuto := false
+	for _, ev := range allAfterAuto {
+		if ev.Title == "Evento Futuro" {
+			foundAuto = true
+			if ev.ID == "" {
+				t.Errorf("expected generated ID, got empty")
+			}
+			if ev.CreatedAt.IsZero() {
+				t.Errorf("expected non-zero CreatedAt")
+			}
+		}
+	}
+	if !foundAuto {
+		t.Errorf("expected to find autoEvent in repository")
+	}
 }
+

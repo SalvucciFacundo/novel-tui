@@ -108,6 +108,19 @@ func (r *SQLiteBrainRepository) migrate() error {
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_session_summaries_created_at ON session_summaries(created_at);
+
+	CREATE TABLE IF NOT EXISTS brain_timeline_events (
+		id TEXT PRIMARY KEY,
+		chronological_order INTEGER NOT NULL DEFAULT 0,
+		period TEXT NOT NULL DEFAULT '',
+		title TEXT NOT NULL,
+		description TEXT NOT NULL,
+		characters TEXT NOT NULL DEFAULT '[]',
+		chapter_id TEXT NOT NULL DEFAULT '',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_timeline_order ON brain_timeline_events(chronological_order, created_at);
 	`
 
 	_, err := r.db.Exec(schema)
@@ -365,6 +378,116 @@ func (r *SQLiteBrainRepository) ListSessionSummaries(ctx context.Context, limit 
 	}
 
 	return summaries, rows.Err()
+}
+
+// SaveTimelineEvent inserts or updates a single timeline event.
+func (r *SQLiteBrainRepository) SaveTimelineEvent(ctx context.Context, event domain.TimelineEvent) error {
+	return r.SaveTimelineEvents(ctx, []domain.TimelineEvent{event})
+}
+
+// SaveTimelineEvents inserts or updates multiple timeline events atomically.
+func (r *SQLiteBrainRepository) SaveTimelineEvents(ctx context.Context, events []domain.TimelineEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO brain_timeline_events (id, chronological_order, period, title, description, characters, chapter_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			chronological_order = excluded.chronological_order,
+			period = excluded.period,
+			title = excluded.title,
+			description = excluded.description,
+			characters = excluded.characters,
+			chapter_id = excluded.chapter_id,
+			created_at = excluded.created_at
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare insert timeline event statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, e := range events {
+		if e.ID == "" {
+			e.ID = fmt.Sprintf("tl_%d_%s", time.Now().UnixNano(), sanitizeKey(e.Title))
+		}
+		if e.CreatedAt.IsZero() {
+			e.CreatedAt = time.Now()
+		}
+
+		charsJSON, err := json.Marshal(e.Characters)
+		if err != nil {
+			charsJSON = []byte("[]")
+		}
+
+		_, err = stmt.ExecContext(ctx,
+			e.ID,
+			e.ChronologicalOrder,
+			e.Period,
+			e.Title,
+			e.Description,
+			string(charsJSON),
+			e.ChapterID,
+			e.CreatedAt.Format(time.RFC3339),
+		)
+		if err != nil {
+			return fmt.Errorf("failed to execute insert timeline event: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// ListTimelineEvents returns all timeline events ordered by chronological order ascending and created_at ascending.
+func (r *SQLiteBrainRepository) ListTimelineEvents(ctx context.Context) ([]domain.TimelineEvent, error) {
+	sqlStr := `
+		SELECT id, chronological_order, period, title, description, characters, chapter_id, created_at
+		FROM brain_timeline_events
+		ORDER BY chronological_order ASC, created_at ASC
+	`
+	rows, err := r.db.QueryContext(ctx, sqlStr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query timeline events: %w", err)
+	}
+	defer rows.Close()
+
+	var events []domain.TimelineEvent
+	for rows.Next() {
+		var e domain.TimelineEvent
+		var charsStr, createdStr string
+
+		if err := rows.Scan(
+			&e.ID,
+			&e.ChronologicalOrder,
+			&e.Period,
+			&e.Title,
+			&e.Description,
+			&charsStr,
+			&e.ChapterID,
+			&createdStr,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan timeline event row: %w", err)
+		}
+
+		_ = json.Unmarshal([]byte(charsStr), &e.Characters)
+		e.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
+		events = append(events, e)
+	}
+
+	return events, rows.Err()
+}
+
+// DeleteTimelineEvent removes a timeline event by ID.
+func (r *SQLiteBrainRepository) DeleteTimelineEvent(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, "DELETE FROM brain_timeline_events WHERE id = ?", id)
+	return err
 }
 
 // Close terminates the underlying database connection.

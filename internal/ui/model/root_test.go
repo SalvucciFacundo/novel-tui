@@ -370,6 +370,76 @@ func TestRootModel_ChatDrawer_BrainActivity(t *testing.T) {
 	}
 }
 
+func TestRootModel_TimelineIntegration(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	novelMeta, err := workspaceMgr.CreateNovel(tempDir, "Novela con Timeline")
+	if err != nil {
+		t.Fatalf("failed to create novel: %v", err)
+	}
+
+	// Add timeline events to .novel/brain.db
+	brainDbPath := filepath.Join(novelMeta.AbsolutePath, ".novel", "brain.db")
+	brainRepo, err := repository.NewSQLiteBrainRepository(brainDbPath)
+	if err != nil {
+		t.Fatalf("failed to open brain db: %v", err)
+	}
+	_ = brainRepo.SaveTimelineEvent(context.Background(), domain.TimelineEvent{
+		ID:                 "tl-1",
+		ChronologicalOrder: 1,
+		Period:             "Era Antigua",
+		Title:              "Gran Cataclismo",
+		Description:        "El mundo se dividió en dos continentes",
+		Characters:         []string{"Ancestros"},
+	})
+	_ = brainRepo.Close()
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateLauncher, tempDir)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+
+	// Open novel
+	m, openCmd := m.Update(messages.OpenNovelMsg{Path: novelMeta.AbsolutePath})
+	if openCmd != nil {
+		msg := openCmd()
+		if msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+
+	// Switch sidebar tab to TabBrain (tab 3)
+	m, _ = m.Update(messages.SelectSidebarTabMsg{Tab: 3})
+	m, _ = m.Update(messages.FocusMsg{Target: messages.FocusSidebar})
+
+	// Trigger BrainActivityMsg reload
+	m, actCmd := m.Update(messages.BrainActivityMsg{
+		Event: domain.BrainActivityEvent{
+			Type:        "saved",
+			FactCount:   1,
+			Description: "🧠 [Brain] Memorizado",
+		},
+	})
+	if actCmd != nil {
+		msg := actCmd()
+		if msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+
+	// Toggle to Timeline view with 't'
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+
+	view := m.View()
+	if !strings.Contains(view, "Gran Cataclismo") {
+		t.Errorf("expected 'Gran Cataclismo' timeline event in editor view sidebar: %s", view)
+	}
+	if !strings.Contains(view, "Era Antigua") {
+		t.Errorf("expected 'Era Antigua' period header in sidebar timeline view: %s", view)
+	}
+}
+
 func TestRootModel_OpenNovel_SetsBrainRepoInSidebar(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.json")
@@ -489,6 +559,47 @@ func TestRootModel_GlobalSearchAndJumpToMatch(t *testing.T) {
 	}
 	if !strings.Contains(postJumpView, "Capítulo 2") {
 		t.Errorf("expected navbar / editor to show Capítulo 2 after jump, got:\n%s", postJumpView)
+	}
+}
+
+func TestRootModel_TimelineInChatPrompt(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	novelMeta, err := workspaceMgr.CreateNovel(tempDir, "Novela Prompt Test")
+	if err != nil {
+		t.Fatalf("failed to create novel: %v", err)
+	}
+
+	brainDbPath := filepath.Join(novelMeta.AbsolutePath, ".novel", "brain.db")
+	brainRepo, err := repository.NewSQLiteBrainRepository(brainDbPath)
+	if err != nil {
+		t.Fatalf("failed to open brain db: %v", err)
+	}
+	_ = brainRepo.SaveTimelineEvent(context.Background(), domain.TimelineEvent{
+		ID:                 "tl-prompt-1",
+		ChronologicalOrder: 1,
+		Period:             "Prólogo",
+		Title:              "Despertar del Héroe",
+		Description:        "El protagonista despierta sin recuerdos",
+	})
+	_ = brainRepo.Close()
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateLauncher, tempDir)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	m, _ = m.Update(messages.OpenNovelMsg{Path: novelMeta.AbsolutePath})
+
+	// Dispatch SendChatMessageMsg
+	_, cmd := m.Update(messages.SendChatMessageMsg{
+		Content:     "¿Qué ocurrió en el prólogo?",
+		EffortLevel: domain.EffortMedium,
+	})
+
+	// Command should be created (even if provider is offline, cmd is generated)
+	if cmd == nil {
+		t.Fatalf("expected stream command on SendChatMessageMsg")
 	}
 }
 

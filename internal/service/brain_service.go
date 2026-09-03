@@ -237,6 +237,146 @@ func (s *BrainService) FormatFactsForPrompt(facts []domain.BrainFact) string {
 	return sb.String()
 }
 
+// BuildTimelineExtractionPrompt constructs prompt for extracting chronological plot events.
+func (s *BrainService) BuildTimelineExtractionPrompt(content string, chapterTitle string) string {
+	var sb strings.Builder
+	sb.WriteString("Eres el módulo de memoria y cronología narrativa 'Brain' de Novel-TUI.\n")
+	sb.WriteString("Analiza el siguiente texto de la novela y extrae los eventos clave ordenados en una línea temporal (Cronología de la Trama).\n\n")
+	if chapterTitle != "" {
+		sb.WriteString(fmt.Sprintf("Capítulo de referencia: %s\n\n", chapterTitle))
+	}
+	sb.WriteString("TEXTO A ANALIZAR:\n")
+	sb.WriteString(content)
+	sb.WriteString("\n\n")
+	sb.WriteString("INSTRUCCIONES DE RESPUESTA:\n")
+	sb.WriteString("1. Si NO hay eventos cronológicos identificables, responde con una lista JSON vacía: []\n")
+	sb.WriteString("2. Si encuentras eventos, responde EXCLUSIVAMENTE con un arreglo JSON en este formato:\n")
+	sb.WriteString("```json\n")
+	sb.WriteString("[\n")
+	sb.WriteString("  {\n")
+	sb.WriteString("    \"chronological_order\": 1,\n")
+	sb.WriteString("    \"period\": \"Era Antigua|Año 452|Capítulo 1|Flashback|Presente\",\n")
+	sb.WriteString("    \"title\": \"Título corto del evento\",\n")
+	sb.WriteString("    \"description\": \"Resumen conciso del evento narrativo\",\n")
+	sb.WriteString("    \"characters\": [\"Personaje 1\", \"Personaje 2\"]\n")
+	sb.WriteString("  }\n")
+	sb.WriteString("]\n")
+	sb.WriteString("```\n")
+	sb.WriteString("No agregues texto explicativo fuera del bloque JSON.")
+
+	return sb.String()
+}
+
+// ParseExtractedTimelineEvents parses the LLM output containing a JSON array of timeline events.
+func (s *BrainService) ParseExtractedTimelineEvents(rawResponse string, chapterID string) ([]domain.TimelineEvent, error) {
+	cleaned := strings.TrimSpace(rawResponse)
+	if cleaned == "" {
+		return []domain.TimelineEvent{}, nil
+	}
+
+	matches := jsonBlockRegex.FindStringSubmatch(cleaned)
+	if len(matches) > 1 {
+		cleaned = strings.TrimSpace(matches[1])
+	} else {
+		start := strings.Index(cleaned, "[")
+		end := strings.LastIndex(cleaned, "]")
+		if start != -1 && end != -1 && end > start {
+			cleaned = cleaned[start : end+1]
+		}
+	}
+
+	if cleaned == "" || cleaned == "[]" {
+		return []domain.TimelineEvent{}, nil
+	}
+
+	type rawTimelineEvent struct {
+		ChronologicalOrder int      `json:"chronological_order"`
+		Period             string   `json:"period"`
+		Title              string   `json:"title"`
+		Description        string   `json:"description"`
+		Characters         []string `json:"characters"`
+	}
+
+	var rawList []rawTimelineEvent
+	if err := json.Unmarshal([]byte(cleaned), &rawList); err != nil {
+		return nil, fmt.Errorf("failed to parse extracted timeline events JSON: %w", err)
+	}
+
+	var events []domain.TimelineEvent
+	now := time.Now()
+
+	for i, item := range rawList {
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			continue
+		}
+
+		order := item.ChronologicalOrder
+		if order <= 0 {
+			order = i + 1
+		}
+
+		period := strings.TrimSpace(item.Period)
+		if period == "" {
+			period = "Presente"
+		}
+
+		events = append(events, domain.TimelineEvent{
+			ID:                 fmt.Sprintf("tl_%d_%s", now.UnixNano()+int64(i), sanitizeConcept(title)),
+			ChronologicalOrder: order,
+			Period:             period,
+			Title:              title,
+			Description:        strings.TrimSpace(item.Description),
+			Characters:         item.Characters,
+			ChapterID:          chapterID,
+			CreatedAt:          now,
+		})
+	}
+
+	return events, nil
+}
+
+// RecordAutoLearnedTimelineEvents parses raw LLM output and persists timeline events into the repository.
+func (s *BrainService) RecordAutoLearnedTimelineEvents(ctx context.Context, rawResponse string, chapterID string) ([]domain.TimelineEvent, error) {
+	events, err := s.ParseExtractedTimelineEvents(rawResponse, chapterID)
+	if err != nil {
+		return nil, err
+	}
+	if len(events) == 0 {
+		return nil, nil
+	}
+
+	if s.repo != nil {
+		if err := s.repo.SaveTimelineEvents(ctx, events); err != nil {
+			return nil, fmt.Errorf("failed to persist auto-learned timeline events: %w", err)
+		}
+	}
+
+	return events, nil
+}
+
+// FormatTimelineForPrompt renders timeline events into a Markdown block for system prompt injection.
+func (s *BrainService) FormatTimelineForPrompt(events []domain.TimelineEvent) string {
+	if len(events) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("--- CRONOLOGÍA DE LA TRAMA (TIMELINE) ---\n")
+	for _, e := range events {
+		charStr := ""
+		if len(e.Characters) > 0 {
+			charStr = fmt.Sprintf(" (Personajes: %s)", strings.Join(e.Characters, ", "))
+		}
+		periodStr := ""
+		if e.Period != "" {
+			periodStr = fmt.Sprintf("[%s] ", e.Period)
+		}
+		sb.WriteString(fmt.Sprintf("%d. %s%s: %s%s\n", e.ChronologicalOrder, periodStr, e.Title, e.Description, charStr))
+	}
+	return sb.String()
+}
+
 func sanitizeConcept(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.ReplaceAll(s, " ", "_")

@@ -3,8 +3,10 @@ package service_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/SalvucciFacundo/novel-tui/internal/domain"
 	"github.com/SalvucciFacundo/novel-tui/internal/repository"
 	"github.com/SalvucciFacundo/novel-tui/internal/service"
 )
@@ -74,7 +76,7 @@ func TestBrainService_FactExtractionAndRecording(t *testing.T) {
 	}
 }
 
-func TestBrainService_SessionSummary(t *testing.T) {
+func TestBrainService_TimelineExtractionAndRecording(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "brain.db")
 
@@ -85,18 +87,91 @@ func TestBrainService_SessionSummary(t *testing.T) {
 	defer repo.Close()
 
 	brainSvc := service.NewBrainService(repo)
+	ctx := context.Background()
 
-	rawSummary := "```json\n{\n  \"summary\": \"Se avanzó en el enfrentamiento en las colinas.\",\n  \"highlights\": [\"Elena salva a Kuno\", \"El monstruo escapa\"]\n}\n```"
+	// 1. BuildTimelineExtractionPrompt
+	prompt := brainSvc.BuildTimelineExtractionPrompt("Siglos atrás, los antiguos forjaron la espada. Hoy Kuno parte hacia el valle.", "Capítulo 1")
+	if prompt == "" || !strings.Contains(prompt, "Cronología") && !strings.Contains(prompt, "cronológica") {
+		t.Errorf("expected timeline extraction prompt, got:\n%s", prompt)
+	}
 
-	summary, err := brainSvc.ParseSessionSummary(rawSummary)
+	// 2. ParseExtractedTimelineEvents with codeblock
+	rawResponse := "Aquí está la cronología de eventos identificados:\n```json\n[\n  {\n    \"chronological_order\": 1,\n    \"period\": \"Era Antigua\",\n    \"title\": \"Forja de la Espada\",\n    \"description\": \"Los antiguos forjan la espada sagrada\",\n    \"characters\": [\"Antiguos\"]\n  },\n  {\n    \"chronological_order\": 2,\n    \"period\": \"Presente\",\n    \"title\": \"Partida al Valle\",\n    \"description\": \"Kuno emprende su viaje hacia el valle\",\n    \"characters\": [\"Kuno\"]\n  }\n]\n```\n"
+
+	events, err := brainSvc.ParseExtractedTimelineEvents(rawResponse, "cap-1")
 	if err != nil {
-		t.Fatalf("ParseSessionSummary failed: %v", err)
+		t.Fatalf("ParseExtractedTimelineEvents failed: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("expected 2 timeline events, got %d", len(events))
+	}
+	if events[0].Title != "Forja de la Espada" || events[0].ChronologicalOrder != 1 {
+		t.Errorf("unexpected event 0: %+v", events[0])
+	}
+	if events[1].Title != "Partida al Valle" || events[1].ChronologicalOrder != 2 {
+		t.Errorf("unexpected event 1: %+v", events[1])
 	}
 
-	if summary.Summary != "Se avanzó en el enfrentamiento en las colinas." {
-		t.Errorf("unexpected summary text: %s", summary.Summary)
+	// 3. RecordAutoLearnedTimelineEvents
+	recorded, err := brainSvc.RecordAutoLearnedTimelineEvents(ctx, rawResponse, "cap-1")
+	if err != nil {
+		t.Fatalf("RecordAutoLearnedTimelineEvents failed: %v", err)
 	}
-	if len(summary.Highlights) != 2 {
-		t.Errorf("expected 2 highlights, got %d", len(summary.Highlights))
+	if len(recorded) != 2 {
+		t.Fatalf("expected 2 recorded events, got %d", len(recorded))
+	}
+
+	// Verify persistence in SQLite repository
+	inDB, err := repo.ListTimelineEvents(ctx)
+	if err != nil {
+		t.Fatalf("ListTimelineEvents failed: %v", err)
+	}
+	if len(inDB) != 2 {
+		t.Fatalf("expected 2 events in DB, got %d", len(inDB))
+	}
+
+	// 4. FormatTimelineForPrompt
+	formatted := brainSvc.FormatTimelineForPrompt(inDB)
+	if !strings.Contains(formatted, "CRONOLOGÍA") && !strings.Contains(formatted, "TIMELINE") {
+		t.Errorf("expected timeline header in formatted prompt, got:\n%s", formatted)
+	}
+	if !strings.Contains(formatted, "Forja de la Espada") || !strings.Contains(formatted, "Partida al Valle") {
+		t.Errorf("expected events in formatted prompt, got:\n%s", formatted)
+	}
+	if !strings.Contains(formatted, "Era Antigua") || !strings.Contains(formatted, "Kuno") {
+		t.Errorf("expected period and characters in formatted prompt, got:\n%s", formatted)
+	}
+
+	// 5. Empty events handling
+	emptyEvents, err := brainSvc.ParseExtractedTimelineEvents("[]", "cap-1")
+	if err != nil || len(emptyEvents) != 0 {
+		t.Errorf("expected empty slice for empty json array, got %v (err: %v)", emptyEvents, err)
+	}
+	emptyFormatted := brainSvc.FormatTimelineForPrompt([]domain.TimelineEvent{})
+	if emptyFormatted != "" {
+		t.Errorf("expected empty string for empty timeline events list, got: %s", emptyFormatted)
+	}
+	// 6. Triangulation: Missing order and period defaults
+	rawWithoutDefaults := "```json\n[{\"title\": \"Suceso Inesperado\", \"description\": \"Ocurre algo sin orden explícito\"}]\n```"
+	parsedDefaults, err := brainSvc.ParseExtractedTimelineEvents(rawWithoutDefaults, "cap-2")
+	if err != nil {
+		t.Fatalf("unexpected error parsing events without defaults: %v", err)
+	}
+	if len(parsedDefaults) != 1 || parsedDefaults[0].ChronologicalOrder != 1 || parsedDefaults[0].Period != "Presente" {
+		t.Errorf("expected defaults applied, got %+v", parsedDefaults)
+	}
+
+	// Triangulation: Invalid JSON returns error
+	_, err = brainSvc.ParseExtractedTimelineEvents("```json\n[invalid\n```", "cap-2")
+	if err == nil {
+		t.Errorf("expected error for invalid JSON")
+	}
+
+	// Triangulation: Nil repository in RecordAutoLearnedTimelineEvents
+	nilBrainSvc := service.NewBrainService(nil)
+	nilRes, err := nilBrainSvc.RecordAutoLearnedTimelineEvents(ctx, rawResponse, "cap-1")
+	if err != nil || len(nilRes) != 2 {
+		t.Errorf("expected nil repo to return parsed events without error, got %d events (err: %v)", len(nilRes), err)
 	}
 }
+

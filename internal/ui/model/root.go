@@ -659,6 +659,16 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			BrainFacts:         brainFacts,
 		})
 
+		if m.brainService != nil && m.brainRepo != nil {
+			timelineEvents, err := m.brainRepo.ListTimelineEvents(context.Background())
+			if err == nil && len(timelineEvents) > 0 {
+				timelineBlock := m.brainService.FormatTimelineForPrompt(timelineEvents)
+				if timelineBlock != "" {
+					sysPrompt = strings.TrimSpace(sysPrompt) + "\n\n" + timelineBlock
+				}
+			}
+		}
+
 		activeSession := m.chatDrawer.ActiveSession()
 		var chatMsgs []domain.ChatMessage
 		chatMsgs = append(chatMsgs, domain.ChatMessage{

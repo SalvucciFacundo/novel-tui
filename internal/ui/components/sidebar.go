@@ -30,6 +30,14 @@ const (
 	TabLore = TabCharacters
 )
 
+// BrainSubView represents the sub-mode inside the Brain tab.
+type BrainSubView int
+
+const (
+	BrainSubViewFacts BrainSubView = iota
+	BrainSubViewTimeline
+)
+
 // SidebarKeyMap defines keybindings for the sidebar.
 type SidebarKeyMap struct {
 	Up      key.Binding
@@ -82,13 +90,16 @@ type SidebarModel struct {
 	brainRepo     domain.BrainRepository
 	novelPath     string
 
-	ActiveTab         SidebarTab
-	Chapters          []domain.Chapter
-	Characters        []domain.Character
-	BrainFacts        []domain.BrainFact
-	SelectedChapter   int
-	SelectedChar      int
-	SelectedBrainFact int
+	ActiveTab             SidebarTab
+	BrainSubView          BrainSubView
+	Chapters              []domain.Chapter
+	Characters            []domain.Character
+	BrainFacts            []domain.BrainFact
+	TimelineEvents        []domain.TimelineEvent
+	SelectedChapter       int
+	SelectedChar          int
+	SelectedBrainFact     int
+	SelectedTimelineEvent int
 
 	notesTextarea textarea.Model
 
@@ -172,26 +183,26 @@ func (m SidebarModel) NotesValue() string {
 func (m *SidebarModel) SetBrainRepository(brainRepo domain.BrainRepository) tea.Cmd {
 	m.brainRepo = brainRepo
 	m.SelectedBrainFact = 0
+	m.SelectedTimelineEvent = 0
 	return m.ReloadBrainFactsCmd()
 }
 
-// ReloadBrainFactsCmd fetches recent brain facts from the repository.
+// ReloadBrainFactsCmd fetches recent brain facts and timeline events from the repository.
 func (m *SidebarModel) ReloadBrainFactsCmd() tea.Cmd {
 	if m.brainRepo == nil {
 		return nil
 	}
 	repo := m.brainRepo
 	return func() tea.Msg {
-		facts, err := repo.ListRecentFacts(context.Background(), 100)
-		if err != nil {
-			return brainFactsLoadedMsg{facts: nil}
-		}
-		return brainFactsLoadedMsg{facts: facts}
+		facts, _ := repo.ListRecentFacts(context.Background(), 100)
+		events, _ := repo.ListTimelineEvents(context.Background())
+		return brainFactsLoadedMsg{facts: facts, events: events}
 	}
 }
 
 type brainFactsLoadedMsg struct {
-	facts []domain.BrainFact
+	facts  []domain.BrainFact
+	events []domain.TimelineEvent
 }
 
 // ReloadDataCmd fetches chapters and characters from repositories.
@@ -236,11 +247,18 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 
 	case brainFactsLoadedMsg:
 		m.BrainFacts = msg.facts
+		m.TimelineEvents = msg.events
 		if m.SelectedBrainFact >= len(m.BrainFacts) && len(m.BrainFacts) > 0 {
 			m.SelectedBrainFact = len(m.BrainFacts) - 1
 		}
 		if len(m.BrainFacts) == 0 {
 			m.SelectedBrainFact = 0
+		}
+		if m.SelectedTimelineEvent >= len(m.TimelineEvents) && len(m.TimelineEvents) > 0 {
+			m.SelectedTimelineEvent = len(m.TimelineEvents) - 1
+		}
+		if len(m.TimelineEvents) == 0 {
+			m.SelectedTimelineEvent = 0
 		}
 
 	case messages.BrainActivityMsg:
@@ -287,8 +305,14 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 					m.SelectedChar--
 				}
 			} else if m.ActiveTab == TabBrain {
-				if m.SelectedBrainFact > 0 {
-					m.SelectedBrainFact--
+				if m.BrainSubView == BrainSubViewTimeline {
+					if m.SelectedTimelineEvent > 0 {
+						m.SelectedTimelineEvent--
+					}
+				} else {
+					if m.SelectedBrainFact > 0 {
+						m.SelectedBrainFact--
+					}
 				}
 			} else {
 				m.notesTextarea.CursorUp()
@@ -305,8 +329,14 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 					m.SelectedChar++
 				}
 			} else if m.ActiveTab == TabBrain {
-				if m.SelectedBrainFact < len(m.BrainFacts)-1 {
-					m.SelectedBrainFact++
+				if m.BrainSubView == BrainSubViewTimeline {
+					if m.SelectedTimelineEvent < len(m.TimelineEvents)-1 {
+						m.SelectedTimelineEvent++
+					}
+				} else {
+					if m.SelectedBrainFact < len(m.BrainFacts)-1 {
+						m.SelectedBrainFact++
+					}
 				}
 			} else {
 				m.notesTextarea.CursorDown()
@@ -354,10 +384,18 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 						return m, nil
 					}
 				} else if m.ActiveTab == TabBrain {
-					factIdx := (msg.Y - 4) / 2
-					if factIdx >= 0 && factIdx < len(m.BrainFacts) {
-						m.SelectedBrainFact = factIdx
-						return m, nil
+					if m.BrainSubView == BrainSubViewTimeline {
+						eventIdx := (msg.Y - 4) / 2
+						if eventIdx >= 0 && eventIdx < len(m.TimelineEvents) {
+							m.SelectedTimelineEvent = eventIdx
+							return m, nil
+						}
+					} else {
+						factIdx := (msg.Y - 4) / 2
+						if factIdx >= 0 && factIdx < len(m.BrainFacts) {
+							m.SelectedBrainFact = factIdx
+							return m, nil
+						}
 					}
 				} else if m.ActiveTab == TabNotes {
 					var taCmd tea.Cmd
@@ -445,8 +483,14 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 					m.SelectedChar--
 				}
 			case TabBrain:
-				if m.SelectedBrainFact > 0 {
-					m.SelectedBrainFact--
+				if m.BrainSubView == BrainSubViewTimeline {
+					if m.SelectedTimelineEvent > 0 {
+						m.SelectedTimelineEvent--
+					}
+				} else {
+					if m.SelectedBrainFact > 0 {
+						m.SelectedBrainFact--
+					}
 				}
 			}
 		case key.Matches(msg, m.keys.Down):
@@ -460,18 +504,42 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 					m.SelectedChar++
 				}
 			case TabBrain:
-				if m.SelectedBrainFact < len(m.BrainFacts)-1 {
-					m.SelectedBrainFact++
+				if m.BrainSubView == BrainSubViewTimeline {
+					if m.SelectedTimelineEvent < len(m.TimelineEvents)-1 {
+						m.SelectedTimelineEvent++
+					}
+				} else {
+					if m.SelectedBrainFact < len(m.BrainFacts)-1 {
+						m.SelectedBrainFact++
+					}
 				}
 			}
+		case m.ActiveTab == TabBrain && msg.String() == "t":
+			if m.BrainSubView == BrainSubViewFacts {
+				m.BrainSubView = BrainSubViewTimeline
+			} else {
+				m.BrainSubView = BrainSubViewFacts
+			}
+			return m, nil
 		case m.ActiveTab == TabBrain && (msg.String() == "d" || msg.String() == "x"):
-			if m.brainRepo != nil && len(m.BrainFacts) > 0 && m.SelectedBrainFact < len(m.BrainFacts) {
-				factToDelete := m.BrainFacts[m.SelectedBrainFact]
+			if m.brainRepo != nil {
 				repo := m.brainRepo
-				return m, func() tea.Msg {
-					_ = repo.DeleteFact(context.Background(), factToDelete.ID)
-					facts, _ := repo.ListRecentFacts(context.Background(), 100)
-					return brainFactsLoadedMsg{facts: facts}
+				if m.BrainSubView == BrainSubViewTimeline && len(m.TimelineEvents) > 0 && m.SelectedTimelineEvent < len(m.TimelineEvents) {
+					eventToDelete := m.TimelineEvents[m.SelectedTimelineEvent]
+					return m, func() tea.Msg {
+						_ = repo.DeleteTimelineEvent(context.Background(), eventToDelete.ID)
+						facts, _ := repo.ListRecentFacts(context.Background(), 100)
+						events, _ := repo.ListTimelineEvents(context.Background())
+						return brainFactsLoadedMsg{facts: facts, events: events}
+					}
+				} else if m.BrainSubView == BrainSubViewFacts && len(m.BrainFacts) > 0 && m.SelectedBrainFact < len(m.BrainFacts) {
+					factToDelete := m.BrainFacts[m.SelectedBrainFact]
+					return m, func() tea.Msg {
+						_ = repo.DeleteFact(context.Background(), factToDelete.ID)
+						facts, _ := repo.ListRecentFacts(context.Background(), 100)
+						events, _ := repo.ListTimelineEvents(context.Background())
+						return brainFactsLoadedMsg{facts: facts, events: events}
+					}
 				}
 			}
 		case key.Matches(msg, m.keys.Select):
@@ -669,11 +737,27 @@ func (m SidebarModel) renderNotesView(width int) string {
 }
 
 func (m SidebarModel) renderBrainTab(width int) string {
+	if m.BrainSubView == BrainSubViewTimeline {
+		return m.renderTimelineView(width)
+	}
+	return m.renderFactsView(width)
+}
+
+func (m SidebarModel) renderFactsView(width int) string {
+	toggleHint := m.styles.ListSubtitle.Render(" [t: Cronología]")
 	if len(m.BrainFacts) == 0 {
-		return m.styles.ListSubtitle.Render("\n  🧠 Brain está activo y aprendiendo\n  de tus textos y conversaciones...")
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			"\n  🧠 Memoria Brain"+toggleHint,
+			m.styles.ListSubtitle.Render("  Brain está activo y aprendiendo\n  de tus textos y conversaciones..."),
+		)
 	}
 
-	headerText := m.styles.ListSubtitle.Render(fmt.Sprintf("\n  🧠 Memoria Brain (%d hechos)", len(m.BrainFacts)))
+	headerText := lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		m.styles.ListSubtitle.Render(fmt.Sprintf("\n  🧠 Memoria Brain (%d hechos)", len(m.BrainFacts))),
+		toggleHint,
+	)
 
 	var items []string
 	for i, fact := range m.BrainFacts {
@@ -726,7 +810,90 @@ func (m SidebarModel) renderBrainTab(width int) string {
 		if selected.ChapterID != "" {
 			cardElements = append(cardElements, m.styles.CardNotes.Width(width-4).Render(fmt.Sprintf("Capítulo: %s", selected.ChapterID)))
 		}
-		cardElements = append(cardElements, m.styles.ListSubtitle.Render("[d] Borrar hecho"))
+		cardElements = append(cardElements, m.styles.ListSubtitle.Render("[d] Borrar hecho | [t] Cronología"))
+
+		cardContent := lipgloss.JoinVertical(lipgloss.Left, cardElements...)
+		card := m.styles.CardContainer.Width(width - 2).Render(cardContent)
+
+		return lipgloss.JoinVertical(lipgloss.Left, headerText, listSection, "\n", card)
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, headerText, listSection)
+}
+
+func (m SidebarModel) renderTimelineView(width int) string {
+	toggleHint := m.styles.ListSubtitle.Render(" [t: Hechos]")
+	if len(m.TimelineEvents) == 0 {
+		return lipgloss.JoinVertical(
+			lipgloss.Left,
+			"\n  ⏳ Cronología / Timeline"+toggleHint,
+			m.styles.ListSubtitle.Render("  No hay eventos registrados en la\n  cronología. Brain los descubrirá\n  automáticamente."),
+		)
+	}
+
+	headerText := lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		m.styles.ListSubtitle.Render(fmt.Sprintf("\n  ⏳ Cronología / Timeline (%d)", len(m.TimelineEvents))),
+		toggleHint,
+	)
+
+	var items []string
+	currentPeriod := ""
+
+	for i, ev := range m.TimelineEvents {
+		// Group header by Period when it changes
+		if ev.Period != "" && ev.Period != currentPeriod {
+			currentPeriod = ev.Period
+			periodHeader := m.styles.ListSubtitle.Render(fmt.Sprintf("  ── [%s] ──", currentPeriod))
+			items = append(items, periodHeader)
+		}
+
+		prefix := "  "
+		marker := "●"
+		if i == m.SelectedTimelineEvent {
+			prefix = "▶ "
+		}
+
+		itemTitle := fmt.Sprintf("%s%s %d. %s", prefix, marker, ev.ChronologicalOrder, ev.Title)
+		if len(itemTitle) > width-4 && width > 7 {
+			itemTitle = itemTitle[:width-7] + "..."
+		}
+
+		var renderedTitle string
+		if i == m.SelectedTimelineEvent {
+			renderedTitle = m.styles.ListItemActive.Width(width).Render(itemTitle)
+		} else {
+			renderedTitle = m.styles.ListItem.Width(width).Render(itemTitle)
+		}
+
+		descSnippet := ev.Description
+		if len(descSnippet) > width-8 && width > 11 {
+			descSnippet = descSnippet[:width-11] + "..."
+		}
+		renderedSub := m.styles.ListSubtitle.Render(fmt.Sprintf("    │ %s", descSnippet))
+
+		items = append(items, renderedTitle, renderedSub)
+	}
+
+	listSection := strings.Join(items, "\n")
+
+	// Selected event detail card
+	if m.SelectedTimelineEvent < len(m.TimelineEvents) {
+		selected := m.TimelineEvents[m.SelectedTimelineEvent]
+		var cardElements []string
+
+		cardElements = append(cardElements, m.styles.CardName.Render(fmt.Sprintf("⏳ #%d: %s", selected.ChronologicalOrder, selected.Title)))
+		periodRole := fmt.Sprintf("Período: %s", selected.Period)
+		if selected.ChapterID != "" {
+			periodRole += fmt.Sprintf(" | Cap: %s", selected.ChapterID)
+		}
+		cardElements = append(cardElements, m.styles.CardRole.Render(periodRole))
+		cardElements = append(cardElements, m.styles.CardDescription.Width(width-4).Render(selected.Description))
+
+		if len(selected.Characters) > 0 {
+			cardElements = append(cardElements, m.styles.CardNotes.Width(width-4).Render(fmt.Sprintf("Personajes: %s", strings.Join(selected.Characters, ", "))))
+		}
+		cardElements = append(cardElements, m.styles.ListSubtitle.Render("[d] Borrar | [t] Hechos"))
 
 		cardContent := lipgloss.JoinVertical(lipgloss.Left, cardElements...)
 		card := m.styles.CardContainer.Width(width - 2).Render(cardContent)

@@ -37,6 +37,18 @@ type SessionSummary struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// TimelineEvent represents a plot point or historical event in the novel's chronology.
+type TimelineEvent struct {
+	ID                 string    `json:"id"`
+	ChronologicalOrder int       `json:"chronological_order"` // 1, 2, 3...
+	Period             string    `json:"period"`              // e.g. "Era Antigua", "Año 452", "Capítulo 1", "Flashback"
+	Title              string    `json:"title"`               // e.g. "Forja de la Espada del Alba"
+	Description        string    `json:"description"`         // Concise event summary
+	Characters         []string  `json:"characters,omitempty"`
+	ChapterID          string    `json:"chapter_id,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
 // BrainRepository defines data persistence and search contracts for the Brain memory system.
 type BrainRepository interface {
 	SaveFact(ctx context.Context, fact BrainFact) error
@@ -48,6 +60,10 @@ type BrainRepository interface {
 	ListRecentFacts(ctx context.Context, limit int) ([]BrainFact, error)
 	SaveSessionSummary(ctx context.Context, summary SessionSummary) error
 	ListSessionSummaries(ctx context.Context, limit int) ([]SessionSummary, error)
+	SaveTimelineEvent(ctx context.Context, event TimelineEvent) error
+	SaveTimelineEvents(ctx context.Context, events []TimelineEvent) error
+	ListTimelineEvents(ctx context.Context) ([]TimelineEvent, error)
+	DeleteTimelineEvent(ctx context.Context, id string) error
 	Close() error
 }
 

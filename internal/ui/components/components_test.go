@@ -455,6 +455,154 @@ func TestNavbarBrainTab(t *testing.T) {
 	}
 }
 
+func TestSidebarBrainTimelineViewAndNavigation(t *testing.T) {
+	tempDir := t.TempDir()
+	chapRepo, _ := repository.NewFileChapterRepository(tempDir)
+	charRepo := repository.NewFileCharacterRepository(tempDir)
+	brainDbPath := filepath.Join(tempDir, "brain.db")
+	brainRepo, err := repository.NewSQLiteBrainRepository(brainDbPath)
+	if err != nil {
+		t.Fatalf("failed to create brain repo: %v", err)
+	}
+	defer brainRepo.Close()
+
+	ctx := context.Background()
+	_ = brainRepo.SaveFact(ctx, domain.BrainFact{
+		ID:      "fact-1",
+		Topic:   "Lore",
+		Concept: "Espada del Sol",
+		Fact:    "Forjada con fuego sagrado",
+		Type:    domain.FactTypeLore,
+	})
+
+	_ = brainRepo.SaveTimelineEvents(ctx, []domain.TimelineEvent{
+		{
+			ID:                 "tl-1",
+			ChronologicalOrder: 1,
+			Period:             "Era Antigua",
+			Title:              "Forja de la Espada",
+			Description:        "Los primeros artesanos forjan la espada sagrada",
+			Characters:         []string{"Aurelio"},
+			ChapterID:          "cap-0",
+		},
+		{
+			ID:                 "tl-2",
+			ChronologicalOrder: 2,
+			Period:             "Capítulo 1",
+			Title:              "Llegada al Valle",
+			Description:        "Kuno llega al valle de piedra",
+			Characters:         []string{"Kuno", "Elena"},
+			ChapterID:          "cap-1",
+		},
+	})
+
+	styles := theme.DefaultStyles
+	sidebar := components.NewSidebarModel(chapRepo, charRepo, styles)
+	sidebar.SetSize(50, 24)
+	sidebar, _ = sidebar.Update(messages.FocusMsg{Target: messages.FocusSidebar})
+
+	cmd := sidebar.SetBrainRepository(brainRepo)
+	if cmd != nil {
+		msg := cmd()
+		sidebar, _ = sidebar.Update(msg)
+	}
+
+	if len(sidebar.BrainFacts) != 1 {
+		t.Fatalf("expected 1 brain fact, got %d", len(sidebar.BrainFacts))
+	}
+	if len(sidebar.TimelineEvents) != 2 {
+		t.Fatalf("expected 2 timeline events, got %d", len(sidebar.TimelineEvents))
+	}
+
+	// 1. Switch to TabBrain (4)
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("4")})
+	if sidebar.ActiveTab != components.TabBrain {
+		t.Fatalf("expected TabBrain, got %v", sidebar.ActiveTab)
+	}
+
+	// Initially in Hechos mode
+	viewFacts := sidebar.View()
+	if !strings.Contains(viewFacts, "Memoria Brain") || !strings.Contains(viewFacts, "Espada del Sol") {
+		t.Errorf("expected facts in view, got: %s", viewFacts)
+	}
+
+	// 2. Press 't' to toggle to Cronología / Timeline mode
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	viewTimeline := sidebar.View()
+	if !strings.Contains(viewTimeline, "Cronología") && !strings.Contains(viewTimeline, "Timeline") {
+		t.Errorf("expected Cronología/Timeline header in view, got: %s", viewTimeline)
+	}
+	if !strings.Contains(viewTimeline, "Forja de la Espada") || !strings.Contains(viewTimeline, "Llegada al Valle") {
+		t.Errorf("expected timeline event titles in view, got: %s", viewTimeline)
+	}
+	if !strings.Contains(viewTimeline, "●") || !strings.Contains(viewTimeline, "│") {
+		t.Errorf("expected timeline markers ● and │ in view, got: %s", viewTimeline)
+	}
+
+	// 3. Navigation with 'j' / 'k' in Timeline mode
+	sidebar.SelectedTimelineEvent = 0
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if sidebar.SelectedTimelineEvent != 1 {
+		t.Errorf("expected SelectedTimelineEvent == 1 after 'j', got %d", sidebar.SelectedTimelineEvent)
+	}
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	if sidebar.SelectedTimelineEvent != 0 {
+		t.Errorf("expected SelectedTimelineEvent == 0 after 'k', got %d", sidebar.SelectedTimelineEvent)
+	}
+
+	// 4. Delete selected timeline event via 'd'
+	sidebar, delCmd := sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	if delCmd != nil {
+		msg := delCmd()
+		sidebar, _ = sidebar.Update(msg)
+	}
+
+	eventsInDB, _ := brainRepo.ListTimelineEvents(ctx)
+	if len(eventsInDB) != 1 || eventsInDB[0].ID != "tl-2" {
+		t.Errorf("expected 1 remaining timeline event (tl-2) in DB, got: %+v", eventsInDB)
+	}
+	if len(sidebar.TimelineEvents) != 1 {
+		t.Errorf("expected 1 timeline event in sidebar after delete, got %d", len(sidebar.TimelineEvents))
+	}
+
+	// 5. Toggle back to Hechos with 't'
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	viewFactsAgain := sidebar.View()
+	if !strings.Contains(viewFactsAgain, "Memoria Brain") {
+		t.Errorf("expected Hechos view after second 't', got: %s", viewFactsAgain)
+	}
+
+	// 6. Triangulation: Toggle back to Timeline and delete last item -> empty state
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	sidebar, delCmd2 := sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	if delCmd2 != nil {
+		msg := delCmd2()
+		sidebar, _ = sidebar.Update(msg)
+	}
+	emptyTimelineView := sidebar.View()
+	if !strings.Contains(emptyTimelineView, "No hay eventos registrados") {
+		t.Errorf("expected empty timeline message, got: %s", emptyTimelineView)
+	}
+
+	// 7. Triangulation: Mouse click in timeline view
+	_ = brainRepo.SaveTimelineEvent(ctx, domain.TimelineEvent{
+		ID:                 "tl-3",
+		ChronologicalOrder: 1,
+		Period:             "Capítulo 3",
+		Title:              "Regreso Triunfal",
+		Description:        "El héroe regresa victorioso",
+	})
+	sidebar, _ = sidebar.Update(sidebar.ReloadBrainFactsCmd()())
+	sidebar, _ = sidebar.Update(tea.MouseMsg{
+		X:    10,
+		Y:    4,
+		Type: tea.MouseLeft,
+	})
+	if sidebar.SelectedTimelineEvent != 0 {
+		t.Errorf("expected SelectedTimelineEvent 0 after mouse click, got %d", sidebar.SelectedTimelineEvent)
+	}
+}
+
 func TestSidebarBrainTabAndFactManagement(t *testing.T) {
 	tempDir := t.TempDir()
 	chapRepo, _ := repository.NewFileChapterRepository(tempDir)
