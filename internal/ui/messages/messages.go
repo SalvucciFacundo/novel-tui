@@ -205,4 +205,16 @@ type GlobalReplaceCompletedMsg struct {
 	Result domain.SearchReplaceResult
 }
 
+// OpenCommandPaletteMsg requests opening the command palette modal.
+type OpenCommandPaletteMsg struct{}
+
+// CloseCommandPaletteMsg requests closing the command palette modal.
+type CloseCommandPaletteMsg struct{}
+
+// ExecuteCommandMsg is dispatched when a command item is selected and executed.
+type ExecuteCommandMsg struct {
+	Command domain.CommandItem
+}
+
+
 

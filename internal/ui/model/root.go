@@ -30,14 +30,15 @@ const (
 
 // RootKeyMap defines global keybindings.
 type RootKeyMap struct {
-	Quit       key.Binding
-	NextTab    key.Binding
-	PrevTab    key.Binding
-	Save       key.Binding
-	NewChapter key.Binding
-	Launcher   key.Binding
-	ToggleChat key.Binding
-	Search     key.Binding
+	Quit           key.Binding
+	NextTab        key.Binding
+	PrevTab        key.Binding
+	Save           key.Binding
+	NewChapter     key.Binding
+	Launcher       key.Binding
+	ToggleChat     key.Binding
+	Search         key.Binding
+	CommandPalette key.Binding
 }
 
 // DefaultRootKeyMap returns standard root navigation keys.
@@ -75,6 +76,10 @@ func DefaultRootKeyMap() RootKeyMap {
 			key.WithKeys("ctrl+f"),
 			key.WithHelp("ctrl+f", "búsqueda global"),
 		),
+		CommandPalette: key.NewBinding(
+			key.WithKeys("ctrl+p", "f1"),
+			key.WithHelp("ctrl+p", "paleta de comandos"),
+		),
 	}
 }
 
@@ -94,15 +99,16 @@ type RootModel struct {
 	brainService    *service.BrainService
 	searchService   *service.SearchService
 
-	launcher    components.LauncherModel
-	llmConfig   components.LLMConfigModel
-	modal       components.ModalModel
-	searchModal components.SearchModalModel
-	navbar      components.NavbarModel
-	sidebar     components.SidebarModel
-	editor      components.EditorModel
-	statusbar   components.StatusBarModel
-	chatDrawer  components.ChatDrawerModel
+	launcher       components.LauncherModel
+	llmConfig      components.LLMConfigModel
+	modal          components.ModalModel
+	searchModal    components.SearchModalModel
+	commandPalette components.CommandPaletteModel
+	navbar         components.NavbarModel
+	sidebar        components.SidebarModel
+	editor         components.EditorModel
+	statusbar      components.StatusBarModel
+	chatDrawer     components.ChatDrawerModel
 
 	showChatDrawer bool
 	streamCancel   context.CancelFunc
@@ -166,15 +172,16 @@ func NewRootModel(
 		chapterRepo:   chapterRepo,
 		characterRepo: characterRepo,
 		sessionRepo:   sessionRepo,
-		launcher:      components.NewLauncherModel(styles),
-		llmConfig:     components.NewLLMConfigModel(styles),
-		modal:         components.NewModalModel(styles),
-		searchModal:   components.NewSearchModalModel(styles),
-		navbar:        components.NewNavbarModel(styles),
-		sidebar:       components.NewSidebarModel(chapterRepo, characterRepo, styles),
-		editor:        components.NewEditorModel(styles),
-		statusbar:     components.NewStatusBarModel(styles),
-		chatDrawer:    components.NewChatDrawerModel(sessionRepo, styles),
+		launcher:       components.NewLauncherModel(styles),
+		llmConfig:      components.NewLLMConfigModel(styles),
+		modal:          components.NewModalModel(styles),
+		searchModal:    components.NewSearchModalModel(styles),
+		commandPalette: components.NewCommandPaletteModel(styles),
+		navbar:         components.NewNavbarModel(styles),
+		sidebar:        components.NewSidebarModel(chapterRepo, characterRepo, styles),
+		editor:         components.NewEditorModel(styles),
+		statusbar:      components.NewStatusBarModel(styles),
+		chatDrawer:     components.NewChatDrawerModel(sessionRepo, styles),
 		activeFocus:   messages.FocusSidebar,
 		styles:        styles,
 		keys:          DefaultRootKeyMap(),
@@ -229,6 +236,7 @@ func NewRootModelWithConfig(
 		llmConfig:       components.NewLLMConfigModel(styles),
 		modal:           components.NewModalModel(styles),
 		searchModal:     components.NewSearchModalModel(styles),
+		commandPalette:  components.NewCommandPaletteModel(styles),
 		navbar:          components.NewNavbarModel(styles),
 		sidebar:         components.NewSidebarModel(chapRepo, charRepo, styles),
 		editor:          components.NewEditorModel(styles),
@@ -265,6 +273,7 @@ func (m RootModel) Init() tea.Cmd {
 	cmds = append(cmds,
 		m.modal.Init(),
 		m.searchModal.Init(),
+		m.commandPalette.Init(),
 		m.launcher.Init(),
 		m.llmConfig.Init(),
 		m.navbar.Init(),
@@ -469,6 +478,84 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var mCmd tea.Cmd
 		m.modal, mCmd = m.modal.Update(msg)
 		return m, mCmd
+
+	case messages.OpenCommandPaletteMsg:
+		var cpCmd tea.Cmd
+		m.commandPalette, cpCmd = m.commandPalette.Update(msg)
+		return m, cpCmd
+
+	case messages.CloseCommandPaletteMsg:
+		var cpCmd tea.Cmd
+		m.commandPalette, cpCmd = m.commandPalette.Update(msg)
+		return m, cpCmd
+
+	case messages.ExecuteCommandMsg:
+		switch msg.Command.ID {
+		case "global_search":
+			var smCmd tea.Cmd
+			m.searchModal, smCmd = m.searchModal.Update(messages.OpenGlobalSearchMsg{})
+			return m, smCmd
+		case "save_chapter":
+			return m, func() tea.Msg {
+				return messages.SaveRequestedMsg{
+					ChapterID: m.editor.ActiveChapter.ID,
+					Content:   m.editor.ActiveChapter.Content,
+				}
+			}
+		case "new_chapter":
+			m.modal.Show(messages.ModalPurposeNewChapter, "Nuevo Capítulo", "Título del nuevo capítulo:", "")
+			return m, nil
+		case "toggle_ai":
+			m.showChatDrawer = !m.showChatDrawer
+			m.recalculateLayout()
+			if m.showChatDrawer {
+				m.activeFocus = messages.FocusChat
+				m.sidebar.Focused = false
+				m.editor.Focused = false
+				m.chatDrawer.Focused = true
+			} else {
+				if m.activeFocus == messages.FocusChat {
+					m.activeFocus = messages.FocusEditor
+					m.editor.Focused = true
+				}
+				m.chatDrawer.Focused = false
+			}
+			focusMsg := messages.FocusMsg{Target: m.activeFocus}
+			var sCmd, eCmd, cCmd tea.Cmd
+			m.sidebar, sCmd = m.sidebar.Update(focusMsg)
+			m.editor, eCmd = m.editor.Update(focusMsg)
+			m.chatDrawer, cCmd = m.chatDrawer.Update(focusMsg)
+			return m, tea.Batch(sCmd, eCmd, cCmd)
+		case "go_launcher":
+			return m, func() tea.Msg {
+				return messages.ChangeViewMsg{View: messages.ViewStateLauncher}
+			}
+		case "tab_chapters":
+			var sCmd tea.Cmd
+			m.sidebar, sCmd = m.sidebar.Update(messages.SelectSidebarTabMsg{Tab: 0})
+			return m, sCmd
+		case "tab_characters":
+			var sCmd tea.Cmd
+			m.sidebar, sCmd = m.sidebar.Update(messages.SelectSidebarTabMsg{Tab: 1})
+			return m, sCmd
+		case "tab_notes":
+			var sCmd tea.Cmd
+			m.sidebar, sCmd = m.sidebar.Update(messages.SelectSidebarTabMsg{Tab: 2})
+			return m, sCmd
+		case "tab_brain":
+			var sCmd tea.Cmd
+			m.sidebar, sCmd = m.sidebar.Update(messages.SelectSidebarTabMsg{Tab: 3})
+			return m, sCmd
+		case "toggle_timeline":
+			var sCmd tea.Cmd
+			m.sidebar, sCmd = m.sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+			return m, sCmd
+		case "llm_config":
+			return m, func() tea.Msg {
+				return messages.ChangeViewMsg{View: messages.ViewStateLLMConfig}
+			}
+		}
+		return m, nil
 
 	case messages.OpenGlobalSearchMsg:
 		var smCmd tea.Cmd
@@ -825,6 +912,11 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(sCmd, eCmd, cCmd)
 
 	case tea.MouseMsg:
+		if m.commandPalette.Active {
+			var cpCmd tea.Cmd
+			m.commandPalette, cpCmd = m.commandPalette.Update(msg)
+			return m, cpCmd
+		}
 		if m.searchModal.Active {
 			var smCmd tea.Cmd
 			m.searchModal, smCmd = m.searchModal.Update(msg)
@@ -903,6 +995,11 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		if m.commandPalette.Active {
+			var cpCmd tea.Cmd
+			m.commandPalette, cpCmd = m.commandPalette.Update(msg)
+			return m, cpCmd
+		}
 		if m.searchModal.Active {
 			var smCmd tea.Cmd
 			m.searchModal, smCmd = m.searchModal.Update(msg)
@@ -916,6 +1013,12 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if key.Matches(msg, m.keys.Quit) {
 			return m, tea.Quit
+		}
+
+		if key.Matches(msg, m.keys.CommandPalette) {
+			var cpCmd tea.Cmd
+			m.commandPalette, cpCmd = m.commandPalette.Update(messages.OpenCommandPaletteMsg{})
+			return m, cpCmd
 		}
 
 		switch m.viewState {
@@ -1032,18 +1135,19 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Forward non-key messages to child components
-	var lCmd, cfgCmd, mCmd, smCmd, navCmd, sCmd, eCmd, cCmd, stCmd tea.Cmd
+	var lCmd, cfgCmd, mCmd, smCmd, cpCmd, navCmd, sCmd, eCmd, cCmd, stCmd tea.Cmd
 	m.launcher, lCmd = m.launcher.Update(msg)
 	m.llmConfig, cfgCmd = m.llmConfig.Update(msg)
 	m.modal, mCmd = m.modal.Update(msg)
 	m.searchModal, smCmd = m.searchModal.Update(msg)
+	m.commandPalette, cpCmd = m.commandPalette.Update(msg)
 	m.navbar, navCmd = m.navbar.Update(msg)
 	m.sidebar, sCmd = m.sidebar.Update(msg)
 	m.editor, eCmd = m.editor.Update(msg)
 	m.chatDrawer, cCmd = m.chatDrawer.Update(msg)
 	m.statusbar, stCmd = m.statusbar.Update(msg)
 
-	cmds = append(cmds, lCmd, cfgCmd, mCmd, smCmd, navCmd, sCmd, eCmd, cCmd, stCmd)
+	cmds = append(cmds, lCmd, cfgCmd, mCmd, smCmd, cpCmd, navCmd, sCmd, eCmd, cCmd, stCmd)
 	return m, tea.Batch(cmds...)
 }
 
@@ -1072,6 +1176,7 @@ func (m *RootModel) recalculateLayout() {
 
 	m.modal.SetSize(m.width, m.height)
 	m.searchModal.SetSize(m.width, m.height)
+	m.commandPalette.SetSize(m.width, m.height)
 	m.launcher.SetSize(m.width, m.height)
 	m.llmConfig.SetSize(m.width, m.height)
 
@@ -1173,6 +1278,10 @@ func (m RootModel) View() string {
 		}
 		statusView := m.statusbar.View()
 		baseView = lipgloss.JoinVertical(lipgloss.Left, navView, mainView, statusView)
+	}
+
+	if m.commandPalette.Active {
+		return m.commandPalette.View()
 	}
 
 	if m.searchModal.Active {

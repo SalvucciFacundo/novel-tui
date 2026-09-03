@@ -651,3 +651,207 @@ func TestRootModel_GlobalReplace(t *testing.T) {
 	}
 }
 
+func TestRootModel_CommandPalette_OpenViaKeys(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	novelMeta, err := workspaceMgr.CreateNovel(tempDir, "Novela Palette Test")
+	if err != nil {
+		t.Fatalf("failed to create novel: %v", err)
+	}
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateEditor, novelMeta.AbsolutePath)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+
+	// 1. Press Ctrl+P in editor view
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	view := m.View()
+	if !strings.Contains(view, "Paleta de Comandos y Atajos") {
+		t.Errorf("expected command palette to open on Ctrl+P, got view: %s", view)
+	}
+
+	// Close on Esc
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		msg := cmd()
+		if msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+	view = m.View()
+	if strings.Contains(view, "Paleta de Comandos y Atajos") {
+		t.Errorf("expected command palette to close on Esc")
+	}
+
+	// 2. Press F1 in editor view
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyF1})
+	view = m.View()
+	if !strings.Contains(view, "Paleta de Comandos y Atajos") {
+		t.Errorf("expected command palette to open on F1, got view: %s", view)
+	}
+
+	// Close again
+	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		msg := cmd()
+		if msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+
+	// 3. Press Ctrl+P in launcher view
+	launcherRoot := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateLauncher, tempDir)
+	lm, _ := launcherRoot.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	lm, _ = lm.Update(tea.KeyMsg{Type: tea.KeyCtrlP})
+	launcherView := lm.View()
+	if !strings.Contains(launcherView, "Paleta de Comandos y Atajos") {
+		t.Errorf("expected command palette to open on Ctrl+P in Launcher view, got view: %s", launcherView)
+	}
+}
+
+func TestRootModel_CommandPalette_ExecuteCommands(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	novelMeta, err := workspaceMgr.CreateNovel(tempDir, "Novela Exec Test")
+	if err != nil {
+		t.Fatalf("failed to create novel: %v", err)
+	}
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateEditor, novelMeta.AbsolutePath)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+
+	// Execute go_launcher
+	m, cmd := m.Update(messages.ExecuteCommandMsg{
+		Command: domain.CommandItem{ID: "go_launcher"},
+	})
+	if cmd != nil {
+		msg := cmd()
+		if msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+	view := m.View()
+	if !strings.Contains(view, "Acciones Rápidas") {
+		t.Errorf("expected launcher view after go_launcher command, got view: %s", view)
+	}
+
+	// Switch back to editor
+	m, _ = m.Update(messages.ChangeViewMsg{View: messages.ViewStateEditor})
+
+	// Execute llm_config
+	m, cmd = m.Update(messages.ExecuteCommandMsg{
+		Command: domain.CommandItem{ID: "llm_config"},
+	})
+	if cmd != nil {
+		msg := cmd()
+		if msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+	view = m.View()
+	if !strings.Contains(view, "Configuración de Inteligencia Artificial") {
+		t.Errorf("expected LLM config view after llm_config command, got view: %s", view)
+	}
+
+	// Switch back to editor
+	m, _ = m.Update(messages.ChangeViewMsg{View: messages.ViewStateEditor})
+
+	// Execute global_search
+	m, cmd = m.Update(messages.ExecuteCommandMsg{
+		Command: domain.CommandItem{ID: "global_search"},
+	})
+	if cmd != nil {
+		msg := cmd()
+		if msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+	view = m.View()
+	if !strings.Contains(view, "Búsqueda Global") {
+		t.Errorf("expected global search modal after global_search command, got view: %s", view)
+	}
+	m, _ = m.Update(messages.CloseGlobalSearchMsg{})
+
+	// Execute new_chapter
+	m, cmd = m.Update(messages.ExecuteCommandMsg{
+		Command: domain.CommandItem{ID: "new_chapter"},
+	})
+	if cmd != nil {
+		msg := cmd()
+		if msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+	view = m.View()
+	if !strings.Contains(view, "Nuevo Capítulo") {
+		t.Errorf("expected new chapter modal after new_chapter command, got view: %s", view)
+	}
+	m, _ = m.Update(messages.HideModalMsg{})
+
+	// Execute toggle_ai
+	m, cmd = m.Update(messages.ExecuteCommandMsg{
+		Command: domain.CommandItem{ID: "toggle_ai"},
+	})
+	if cmd != nil {
+		msg := cmd()
+		if msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+	view = m.View()
+	if !strings.Contains(view, "Asistente IA") {
+		t.Errorf("expected chat drawer to toggle after toggle_ai command, got view: %s", view)
+	}
+
+	// Execute tab commands (tab_chapters, tab_characters, tab_notes, tab_brain)
+	for _, tabCmd := range []struct {
+		id      string
+		tabName string
+	}{
+		{"tab_characters", "Personajes"},
+		{"tab_notes", "Notas"},
+		{"tab_brain", "Brain"},
+		{"tab_chapters", "Capítulos"},
+	} {
+		m, cmd = m.Update(messages.ExecuteCommandMsg{
+			Command: domain.CommandItem{ID: tabCmd.id},
+		})
+		if cmd != nil {
+			msg := cmd()
+			if msg != nil {
+				m, _ = m.Update(msg)
+			}
+		}
+	}
+
+	// Execute toggle_timeline
+	m, cmd = m.Update(messages.ExecuteCommandMsg{
+		Command: domain.CommandItem{ID: "toggle_timeline"},
+	})
+	if cmd != nil {
+		msg := cmd()
+		if msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+
+	// Execute unknown command ID (should not crash)
+	m, cmd = m.Update(messages.ExecuteCommandMsg{
+		Command: domain.CommandItem{ID: "unknown_future_command"},
+	})
+	if cmd != nil {
+		_ = cmd()
+	}
+
+	// Test mouse message when command palette is active
+	m, _ = m.Update(messages.OpenCommandPaletteMsg{})
+	m, _ = m.Update(tea.MouseMsg{X: 10, Y: 10, Type: tea.MouseLeft})
+}
+
+
+

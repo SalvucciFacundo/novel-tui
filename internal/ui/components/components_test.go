@@ -904,3 +904,179 @@ func TestSearchModalComponent(t *testing.T) {
 	}
 }
 
+func TestCommandPaletteComponent(t *testing.T) {
+	styles := theme.DefaultStyles
+	palette := components.NewCommandPaletteModel(styles)
+	palette.SetSize(120, 40)
+
+	// Inactive by default
+	if palette.Active {
+		t.Errorf("expected palette to be inactive initially")
+	}
+	if palette.View() != "" {
+		t.Errorf("expected empty view when inactive")
+	}
+
+	// Open via message
+	palette, _ = palette.Update(messages.OpenCommandPaletteMsg{})
+	if !palette.Active {
+		t.Errorf("expected palette to be active after OpenCommandPaletteMsg")
+	}
+
+	// Verify all default commands loaded
+	if len(palette.Filtered) != len(domain.DefaultCommands()) {
+		t.Fatalf("expected %d default commands, got %d", len(domain.DefaultCommands()), len(palette.Filtered))
+	}
+
+	// Verify view rendering when active
+	view := palette.View()
+	if !strings.Contains(view, "Paleta de Comandos y Atajos") {
+		t.Errorf("expected header in view: %s", view)
+	}
+	if !strings.Contains(view, "Búsqueda y Reemplazo Global") {
+		t.Errorf("expected command title in view: %s", view)
+	}
+	if !strings.Contains(view, "Ctrl+F") {
+		t.Errorf("expected shortcut badge in view: %s", view)
+	}
+	if !strings.Contains(view, "Ejecutar") || !strings.Contains(view, "Cerrar") {
+		t.Errorf("expected footer in view: %s", view)
+	}
+
+	// Test Filtering by Title
+	palette.SearchInput.SetValue("Guardar")
+	palette.PerformFilter()
+	if len(palette.Filtered) == 0 || palette.Filtered[0].ID != "save_chapter" {
+		t.Errorf("expected filter for 'Guardar' to find save_chapter, got %+v", palette.Filtered)
+	}
+
+	// Test Filtering by Shortcut
+	palette.SearchInput.SetValue("Ctrl+A")
+	palette.PerformFilter()
+	if len(palette.Filtered) == 0 || palette.Filtered[0].ID != "toggle_ai" {
+		t.Errorf("expected filter for 'Ctrl+A' to find toggle_ai, got %+v", palette.Filtered)
+	}
+
+	// Test Filtering by Category
+	palette.SearchInput.SetValue("Memoria Brain")
+	palette.PerformFilter()
+	if len(palette.Filtered) < 2 {
+		t.Errorf("expected at least 2 commands for 'Memoria Brain', got %d", len(palette.Filtered))
+	}
+
+	// Test Filtering by Description
+	palette.SearchInput.SetValue("reemplazar")
+	palette.PerformFilter()
+	if len(palette.Filtered) == 0 || palette.Filtered[0].ID != "global_search" {
+		t.Errorf("expected filter for 'reemplazar' to find global_search, got %+v", palette.Filtered)
+	}
+
+	// Test Empty Filter
+	palette.SearchInput.SetValue("no_such_command_exists_12345")
+	palette.PerformFilter()
+	if len(palette.Filtered) != 0 {
+		t.Errorf("expected 0 commands for non-matching query, got %d", len(palette.Filtered))
+	}
+	emptyView := palette.View()
+	if !strings.Contains(emptyView, "No se encontraron comandos") {
+		t.Errorf("expected empty state message in view: %s", emptyView)
+	}
+
+	// Reset filter and test Navigation
+	palette.SearchInput.SetValue("")
+	palette.PerformFilter()
+	palette.CursorIndex = 0
+
+	// Down arrow
+	palette, _ = palette.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if palette.CursorIndex != 1 {
+		t.Errorf("expected cursorIndex 1 after Down arrow, got %d", palette.CursorIndex)
+	}
+
+	// Up arrow
+	palette, _ = palette.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if palette.CursorIndex != 0 {
+		t.Errorf("expected cursorIndex 0 after Up arrow, got %d", palette.CursorIndex)
+	}
+
+	// Boundary clamping on Up at 0
+	palette, _ = palette.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if palette.CursorIndex != 0 {
+		t.Errorf("expected cursorIndex clamped to 0, got %d", palette.CursorIndex)
+	}
+
+	// Test Enter executes selected command
+	palette.CursorIndex = 0
+	expectedCmd := palette.Filtered[0]
+	var cmd tea.Cmd
+	palette, cmd = palette.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if palette.Active {
+		t.Errorf("expected palette to be closed after Enter")
+	}
+	if cmd == nil {
+		t.Fatalf("expected ExecuteCommandMsg command on Enter")
+	}
+	execMsg, ok := cmd().(messages.ExecuteCommandMsg)
+	if !ok {
+		t.Fatalf("expected ExecuteCommandMsg, got %T", cmd())
+	}
+	if execMsg.Command.ID != expectedCmd.ID {
+		t.Errorf("expected executed command ID %q, got %q", expectedCmd.ID, execMsg.Command.ID)
+	}
+
+	// Test Esc closes palette
+	palette.Show()
+	if !palette.Active {
+		t.Errorf("expected palette to be active after Show()")
+	}
+	palette, cmd = palette.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if palette.Active {
+		t.Errorf("expected palette to be inactive after Esc")
+	}
+	if cmd == nil {
+		t.Fatalf("expected CloseCommandPaletteMsg on Esc")
+	}
+	if _, ok := cmd().(messages.CloseCommandPaletteMsg); !ok {
+		t.Errorf("expected CloseCommandPaletteMsg, got %T", cmd())
+	}
+
+	// Triangulation 1: SetCommands with custom commands
+	customCmds := []domain.CommandItem{
+		{ID: "c1", Title: "Custom One", Category: "Test", Shortcut: "1", Description: "Desc 1"},
+		{ID: "c2", Title: "Custom Two", Category: "Test", Shortcut: "2", Description: "Desc 2"},
+	}
+	palette.SetCommands(customCmds)
+	if len(palette.Commands) != 2 {
+		t.Errorf("expected 2 custom commands, got %d", len(palette.Commands))
+	}
+
+	// Triangulation 2: Cursor clamping when filter reduces size
+	palette.CursorIndex = 1
+	palette.SearchInput.SetValue("Custom One")
+	palette.PerformFilter()
+	if palette.CursorIndex != 0 {
+		t.Errorf("expected CursorIndex to clamp to 0, got %d", palette.CursorIndex)
+	}
+
+	// Triangulation 3: Enter on empty results returns nil command
+	palette.SearchInput.SetValue("nonexistent_pattern_123")
+	palette.PerformFilter()
+	palette.Active = true
+	_, emptyCmd := palette.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if emptyCmd != nil {
+		t.Errorf("expected nil cmd on Enter with 0 matches")
+	}
+
+	// Triangulation 4: Down arrow boundary clamping at the end
+	palette.SetCommands(customCmds)
+	palette.SearchInput.SetValue("")
+	palette.PerformFilter()
+	palette.CursorIndex = 1
+	palette, _ = palette.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if palette.CursorIndex != 1 {
+		t.Errorf("expected CursorIndex clamped to max index 1, got %d", palette.CursorIndex)
+	}
+}
+
+
+
