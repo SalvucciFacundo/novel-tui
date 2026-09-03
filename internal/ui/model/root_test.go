@@ -2,6 +2,7 @@ package model_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -920,6 +921,68 @@ func TestRootModel_NovelSettings_LoadAndModalFlow(t *testing.T) {
 		t.Errorf("expected updated genres [smut_explicit, monster_girls_r18], got %+v", savedSettings.Genres)
 	}
 }
+
+func TestRootModel_ColabServer_Integration(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateEditor, tempDir)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+
+	// 1. Keybinding Ctrl+G triggers StartColabServerMsg
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	if cmd == nil {
+		t.Fatalf("expected command on Ctrl+G")
+	}
+	msg := cmd()
+	if _, ok := msg.(messages.StartColabServerMsg); !ok {
+		t.Errorf("expected StartColabServerMsg on Ctrl+G, got: %+v", msg)
+	}
+
+	// 2. Command Palette execution for start_colab_llm
+	m, cmd = m.Update(messages.ExecuteCommandMsg{
+		Command: domain.CommandItem{ID: "start_colab_llm"},
+	})
+	if cmd == nil {
+		t.Fatalf("expected command on ExecuteCommandMsg(start_colab_llm)")
+	}
+	msg = cmd()
+	if _, ok := msg.(messages.StartColabServerMsg); !ok {
+		t.Errorf("expected StartColabServerMsg from ExecuteCommandMsg, got: %+v", msg)
+	}
+
+	// 3. StartColabServerMsg sets connecting notification and returns background cmd
+	m, startCmd := m.Update(messages.StartColabServerMsg{})
+	if startCmd == nil {
+		t.Fatalf("expected async cmd on StartColabServerMsg")
+	}
+
+	// 4. ColabServerStartedMsg updates config to OpenAI provider + Stheno model + BaseURL and saves config
+	m, _ = m.Update(messages.ColabServerStartedMsg{
+		BaseURL: "https://novel-gpu-tunnel.trycloudflare.com/v1",
+	})
+	savedCfg, err := configRepo.Load()
+	if err != nil {
+		t.Fatalf("failed to load saved config: %v", err)
+	}
+	if savedCfg.LLM.Provider != "openai" {
+		t.Errorf("expected provider 'openai', got %q", savedCfg.LLM.Provider)
+	}
+	if savedCfg.LLM.BaseURL != "https://novel-gpu-tunnel.trycloudflare.com/v1" {
+		t.Errorf("expected BaseURL 'https://novel-gpu-tunnel.trycloudflare.com/v1', got %q", savedCfg.LLM.BaseURL)
+	}
+	if savedCfg.LLM.Model != "stheno" {
+		t.Errorf("expected Model 'stheno', got %q", savedCfg.LLM.Model)
+	}
+
+	// 5. ColabServerErrorMsg sets error notification
+	m, _ = m.Update(messages.ColabServerErrorMsg{
+		Err: errors.New("timeout connecting to Colab"),
+	})
+}
+
 
 
 

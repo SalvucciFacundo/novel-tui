@@ -51,6 +51,7 @@ func TestDefaultCommands(t *testing.T) {
 		"tab_brain",
 		"toggle_timeline",
 		"llm_config",
+		"start_colab_llm",
 	}
 
 	foundMap := make(map[string]domain.CommandItem)
@@ -77,6 +78,23 @@ func TestDefaultCommands(t *testing.T) {
 		if _, ok := foundMap[reqID]; !ok {
 			t.Errorf("expected command ID %q in DefaultCommands()", reqID)
 		}
+	}
+
+	colabCmd, ok := foundMap["start_colab_llm"]
+	if !ok {
+		t.Fatalf("expected start_colab_llm command in DefaultCommands()")
+	}
+	if colabCmd.Title != "Iniciar Servidor LLM en Google Colab (GPU T4)" {
+		t.Errorf("expected Title 'Iniciar Servidor LLM en Google Colab (GPU T4)', got %q", colabCmd.Title)
+	}
+	if colabCmd.Category != "Asistente IA" {
+		t.Errorf("expected Category 'Asistente IA', got %q", colabCmd.Category)
+	}
+	if colabCmd.Shortcut != "Ctrl+G" {
+		t.Errorf("expected Shortcut 'Ctrl+G', got %q", colabCmd.Shortcut)
+	}
+	if colabCmd.Description != "Aprovisiona una GPU T4 en Colab y conecta el modelo Stheno 8B sin censura" {
+		t.Errorf("expected Description 'Aprovisiona una GPU T4 en Colab y conecta el modelo Stheno 8B sin censura', got %q", colabCmd.Description)
 	}
 }
 

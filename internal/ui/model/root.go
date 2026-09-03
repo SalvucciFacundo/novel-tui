@@ -39,6 +39,7 @@ type RootKeyMap struct {
 	ToggleChat     key.Binding
 	Search         key.Binding
 	CommandPalette key.Binding
+	StartColab     key.Binding
 }
 
 // DefaultRootKeyMap returns standard root navigation keys.
@@ -80,6 +81,10 @@ func DefaultRootKeyMap() RootKeyMap {
 			key.WithKeys("ctrl+p", "f1"),
 			key.WithHelp("ctrl+p", "paleta de comandos"),
 		),
+		StartColab: key.NewBinding(
+			key.WithKeys("ctrl+g"),
+			key.WithHelp("ctrl+g", "iniciar colab llm"),
+		),
 	}
 }
 
@@ -99,6 +104,7 @@ type RootModel struct {
 	brainRepo       domain.BrainRepository
 	brainService    *service.BrainService
 	searchService   *service.SearchService
+	colabService    service.ColabService
 
 	launcher       components.LauncherModel
 	llmConfig      components.LLMConfigModel
@@ -197,6 +203,7 @@ func NewRootModel(
 		activeFocus:   messages.FocusSidebar,
 		styles:        styles,
 		keys:          DefaultRootKeyMap(),
+		colabService:  service.NewColabService(),
 	}
 	m.commandPalette.SetCommands(defaultRootCommands())
 	if chapterRepo != nil {
@@ -259,6 +266,7 @@ func NewRootModelWithConfig(
 		activeFocus:     messages.FocusSidebar,
 		styles:          styles,
 		keys:            DefaultRootKeyMap(),
+		colabService:    service.NewColabService(),
 	}
 	m.commandPalette.SetCommands(defaultRootCommands())
 
@@ -593,6 +601,10 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "llm_config":
 			return m, func() tea.Msg {
 				return messages.ChangeViewMsg{View: messages.ViewStateLLMConfig}
+			}
+		case "start_colab_llm":
+			return m, func() tea.Msg {
+				return messages.StartColabServerMsg{}
 			}
 		}
 		return m, nil
@@ -975,6 +987,63 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chatDrawer, cCmd = m.chatDrawer.Update(msg)
 		return m, cCmd
 
+	case messages.StartColabServerMsg:
+		m.launcher.Notification = "⚡ Conectando con Google Colab (GPU T4)..."
+		m.launcher.NotificationErr = false
+		colabSvc := m.colabService
+		if colabSvc == nil {
+			colabSvc = service.NewColabService()
+		}
+		cmd := func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			baseURL, err := colabSvc.StartColabServer(ctx)
+			if err != nil {
+				return messages.ColabServerErrorMsg{Err: err}
+			}
+			return messages.ColabServerStartedMsg{BaseURL: baseURL}
+		}
+		return m, tea.Batch(
+			func() tea.Msg {
+				return messages.NotificationMsg{
+					Message: "⚡ Conectando con Google Colab (GPU T4)...",
+					IsError: false,
+				}
+			},
+			cmd,
+		)
+
+	case messages.ColabServerStartedMsg:
+		if m.config != nil {
+			m.config.LLM.Provider = "openai"
+			m.config.LLM.BaseURL = msg.BaseURL
+			m.config.LLM.Model = "stheno"
+			if m.configRepo != nil {
+				_ = m.configRepo.Save(m.config)
+			}
+			m.llmConfig.SetConfig(m.config.LLM)
+		}
+		notif := "⚡ Servidor Colab Conectado: " + msg.BaseURL
+		m.launcher.Notification = notif
+		m.launcher.NotificationErr = false
+		return m, func() tea.Msg {
+			return messages.NotificationMsg{
+				Message: notif,
+				IsError: false,
+			}
+		}
+
+	case messages.ColabServerErrorMsg:
+		errText := "⚠️ Error en Colab: " + msg.Err.Error()
+		m.launcher.Notification = errText
+		m.launcher.NotificationErr = true
+		return m, func() tea.Msg {
+			return messages.NotificationMsg{
+				Message: errText,
+				IsError: true,
+			}
+		}
+
 	case messages.FocusMsg:
 		m.activeFocus = msg.Target
 		var sCmd, eCmd, cCmd tea.Cmd
@@ -1085,6 +1154,12 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if key.Matches(msg, m.keys.Quit) {
 			return m, tea.Quit
+		}
+
+		if key.Matches(msg, m.keys.StartColab) {
+			return m, func() tea.Msg {
+				return messages.StartColabServerMsg{}
+			}
 		}
 
 		if key.Matches(msg, m.keys.CommandPalette) {
@@ -1221,6 +1296,11 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	cmds = append(cmds, lCmd, cfgCmd, mCmd, smCmd, cpCmd, navCmd, sCmd, eCmd, cCmd, stCmd)
 	return m, tea.Batch(cmds...)
+}
+
+// SetColabService injects a custom ColabService (primarily for testing and mocking).
+func (m *RootModel) SetColabService(svc service.ColabService) {
+	m.colabService = svc
 }
 
 func (m *RootModel) updateRecentNovels(novelPath string) {

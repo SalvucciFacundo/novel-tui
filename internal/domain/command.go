@@ -89,5 +89,12 @@ func DefaultCommands() []CommandItem {
 			Shortcut:    "c",
 			Description: "Configurar proveedor, modelos y claves de API de IA",
 		},
+		{
+			ID:          "start_colab_llm",
+			Title:       "Iniciar Servidor LLM en Google Colab (GPU T4)",
+			Category:    "Asistente IA",
+			Shortcut:    "Ctrl+G",
+			Description: "Aprovisiona una GPU T4 en Colab y conecta el modelo Stheno 8B sin censura",
+		},
 	}
 }

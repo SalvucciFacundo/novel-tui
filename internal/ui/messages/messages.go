@@ -217,5 +217,18 @@ type ExecuteCommandMsg struct {
 	Command domain.CommandItem
 }
 
+// StartColabServerMsg triggers the provisioning and startup of the Colab GPU LLM server.
+type StartColabServerMsg struct{}
+
+// ColabServerStartedMsg is emitted when the Colab GPU LLM server is successfully reachable.
+type ColabServerStartedMsg struct {
+	BaseURL string
+}
+
+// ColabServerErrorMsg is emitted when Colab provisioning or execution fails.
+type ColabServerErrorMsg struct {
+	Err error
+}
+
 
 
