@@ -182,3 +182,27 @@ type BrainActivityMsg struct {
 	Event domain.BrainActivityEvent
 }
 
+// OpenGlobalSearchMsg requests opening the global search and replace modal.
+type OpenGlobalSearchMsg struct{}
+
+// CloseGlobalSearchMsg requests closing the global search modal.
+type CloseGlobalSearchMsg struct{}
+
+// JumpToMatchMsg requests navigating the editor to a specific search match.
+type JumpToMatchMsg struct {
+	Match domain.SearchMatch
+}
+
+// GlobalReplaceMsg requests replacing occurrences of Query with Replacement novel-wide.
+type GlobalReplaceMsg struct {
+	Query         string
+	Replacement   string
+	CaseSensitive bool
+}
+
+// GlobalReplaceCompletedMsg is emitted after a global replace operation finishes.
+type GlobalReplaceCompletedMsg struct {
+	Result domain.SearchReplaceResult
+}
+
+

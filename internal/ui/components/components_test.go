@@ -591,3 +591,168 @@ func TestSidebarBrainTabAndFactManagement(t *testing.T) {
 		t.Errorf("expected 1 fact in sidebar after BrainActivityMsg reload, got %d", len(sidebar.BrainFacts))
 	}
 }
+
+func TestEditorGotoLine(t *testing.T) {
+	styles := theme.DefaultStyles
+	editor := components.NewEditorModel(styles)
+	editor.SetSize(60, 20)
+
+	content := "Línea 1\nLínea 2\nLínea 3\nLínea 4\nLínea 5"
+	editor, _ = editor.Update(messages.ChapterSelectedMsg{
+		Chapter: domain.Chapter{
+			ID:      "chap-1",
+			Title:   "Capítulo 1",
+			Content: content,
+		},
+	})
+
+	// GotoLine 3
+	editor.GotoLine(3)
+	// Line() in textarea is 0-indexed, so line 3 is index 2
+	if editor.Line() != 2 {
+		t.Errorf("expected line index 2 for line 3, got %d", editor.Line())
+	}
+
+	// GotoLine 1
+	editor.GotoLine(1)
+	if editor.Line() != 0 {
+		t.Errorf("expected line index 0 for line 1, got %d", editor.Line())
+	}
+
+	// SetCursorPosition(4, 2)
+	editor.SetCursorPosition(4, 2)
+	if editor.Line() != 3 {
+		t.Errorf("expected line index 3 for line 4, got %d", editor.Line())
+	}
+}
+
+func TestSearchModalComponent(t *testing.T) {
+	styles := theme.DefaultStyles
+	modal := components.NewSearchModalModel(styles)
+	modal.SetSize(100, 30)
+
+	// Initially inactive
+	if modal.Active {
+		t.Errorf("expected search modal to be inactive initially")
+	}
+	if modal.View() != "" {
+		t.Errorf("expected empty view when inactive")
+	}
+
+	// Open search modal via OpenGlobalSearchMsg
+	modal, cmd := modal.Update(messages.OpenGlobalSearchMsg{})
+	if !modal.Active {
+		t.Errorf("expected search modal to be active after OpenGlobalSearchMsg")
+	}
+	if cmd == nil {
+		t.Errorf("expected blink/focus command on open")
+	}
+
+	// Set matches
+	matches := []domain.SearchMatch{
+		{
+			ChapterID:    "01_cap1",
+			ChapterTitle: "Capítulo 1",
+			LineNumber:   5,
+			Column:       10,
+			LineText:     "El gran dragón volaba sobre el valle.",
+			MatchText:    "dragón",
+		},
+		{
+			ChapterID:    "02_cap2",
+			ChapterTitle: "Capítulo 2",
+			LineNumber:   12,
+			Column:       3,
+			LineText:     "Un dragón dormía plácidamente.",
+			MatchText:    "dragón",
+		},
+	}
+	modal.SetMatches(matches)
+	if len(modal.Matches) != 2 {
+		t.Fatalf("expected 2 matches, got %d", len(modal.Matches))
+	}
+
+	// View rendering contains match badge and chapter info
+	view := modal.View()
+	if !strings.Contains(view, "coincidencias") && !strings.Contains(view, "2") {
+		t.Errorf("expected match summary in view: %s", view)
+	}
+	if !strings.Contains(view, "Capítulo 1") {
+		t.Errorf("expected chapter 1 in view: %s", view)
+	}
+
+	// Test navigation with Down arrow
+	modal, _ = modal.Update(tea.KeyMsg{Type: tea.KeyDown})
+	if modal.SelectedMatch != 1 {
+		t.Errorf("expected SelectedMatch 1 after KeyDown, got %d", modal.SelectedMatch)
+	}
+
+	// Test navigation with Up arrow
+	modal, _ = modal.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if modal.SelectedMatch != 0 {
+		t.Errorf("expected SelectedMatch 0 after KeyUp, got %d", modal.SelectedMatch)
+	}
+
+	// Test Enter to jump to match
+	modal, cmd = modal.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if modal.Active {
+		t.Errorf("expected modal to close on Enter jump")
+	}
+	if cmd == nil {
+		t.Fatalf("expected JumpToMatchMsg command on Enter")
+	}
+	jumpMsg, ok := cmd().(messages.JumpToMatchMsg)
+	if !ok {
+		t.Fatalf("expected JumpToMatchMsg, got %T", cmd())
+	}
+	if jumpMsg.Match.ChapterID != "01_cap1" || jumpMsg.Match.LineNumber != 5 {
+		t.Errorf("unexpected JumpToMatchMsg content: %+v", jumpMsg.Match)
+	}
+
+	// Reopen and test Tab focus switching and Replace input
+	modal, _ = modal.Update(messages.OpenGlobalSearchMsg{})
+	modal.SearchInput.SetValue("dragón")
+	modal.ReplaceInput.SetValue("fénix")
+	modal.IsReplaceMode = true
+	modal.FocusIndex = 1 // focus replace input
+
+	// Enter on replace input emits GlobalReplaceMsg
+	modal, cmd = modal.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("expected GlobalReplaceMsg command on Enter from Replace input")
+	}
+	repMsg, ok := cmd().(messages.GlobalReplaceMsg)
+	if !ok {
+		t.Fatalf("expected GlobalReplaceMsg, got %T", cmd())
+	}
+	if repMsg.Query != "dragón" || repMsg.Replacement != "fénix" {
+		t.Errorf("unexpected GlobalReplaceMsg: %+v", repMsg)
+	}
+
+	// Test Esc closes modal
+	modal, cmd = modal.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if modal.Active {
+		t.Errorf("expected modal to be inactive on Esc")
+	}
+	if cmd != nil {
+		if _, ok := cmd().(messages.CloseGlobalSearchMsg); !ok {
+			t.Errorf("expected CloseGlobalSearchMsg, got %T", cmd())
+		}
+	}
+
+	// Test SearchFunc live search
+	modal.SearchFunc = func(query string, caseSensitive bool) ([]domain.SearchMatch, error) {
+		if query == "fénix" {
+			return []domain.SearchMatch{
+				{ChapterID: "chap-1", LineNumber: 1, MatchText: "fénix"},
+			}, nil
+		}
+		return nil, nil
+	}
+	modal.SearchInput.SetValue("fénix")
+	modal.PerformSearch()
+	if len(modal.Matches) != 1 {
+		t.Fatalf("expected 1 match from PerformSearch, got %d", len(modal.Matches))
+	}
+}
+

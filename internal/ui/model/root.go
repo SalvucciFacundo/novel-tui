@@ -37,6 +37,7 @@ type RootKeyMap struct {
 	NewChapter key.Binding
 	Launcher   key.Binding
 	ToggleChat key.Binding
+	Search     key.Binding
 }
 
 // DefaultRootKeyMap returns standard root navigation keys.
@@ -70,6 +71,10 @@ func DefaultRootKeyMap() RootKeyMap {
 			key.WithKeys("ctrl+a"),
 			key.WithHelp("ctrl+a", "toggle chat drawer"),
 		),
+		Search: key.NewBinding(
+			key.WithKeys("ctrl+f"),
+			key.WithHelp("ctrl+f", "búsqueda global"),
+		),
 	}
 }
 
@@ -87,15 +92,17 @@ type RootModel struct {
 	sessionRepo     domain.ChatSessionRepository
 	brainRepo       domain.BrainRepository
 	brainService    *service.BrainService
+	searchService   *service.SearchService
 
-	launcher   components.LauncherModel
-	llmConfig  components.LLMConfigModel
-	modal      components.ModalModel
-	navbar     components.NavbarModel
-	sidebar    components.SidebarModel
-	editor     components.EditorModel
-	statusbar  components.StatusBarModel
-	chatDrawer components.ChatDrawerModel
+	launcher    components.LauncherModel
+	llmConfig   components.LLMConfigModel
+	modal       components.ModalModel
+	searchModal components.SearchModalModel
+	navbar      components.NavbarModel
+	sidebar     components.SidebarModel
+	editor      components.EditorModel
+	statusbar   components.StatusBarModel
+	chatDrawer  components.ChatDrawerModel
 
 	showChatDrawer bool
 	streamCancel   context.CancelFunc
@@ -162,6 +169,7 @@ func NewRootModel(
 		launcher:      components.NewLauncherModel(styles),
 		llmConfig:     components.NewLLMConfigModel(styles),
 		modal:         components.NewModalModel(styles),
+		searchModal:   components.NewSearchModalModel(styles),
 		navbar:        components.NewNavbarModel(styles),
 		sidebar:       components.NewSidebarModel(chapterRepo, characterRepo, styles),
 		editor:        components.NewEditorModel(styles),
@@ -170,6 +178,15 @@ func NewRootModel(
 		activeFocus:   messages.FocusSidebar,
 		styles:        styles,
 		keys:          DefaultRootKeyMap(),
+	}
+	if chapterRepo != nil {
+		m.searchService = service.NewSearchService(chapterRepo)
+		m.searchModal.SearchFunc = func(query string, caseSensitive bool) ([]domain.SearchMatch, error) {
+			if m.searchService != nil {
+				return m.searchService.Search(query, caseSensitive)
+			}
+			return nil, nil
+		}
 	}
 	m.launcher.SetRootDir(cfg.RootDir)
 	m.llmConfig.SetConfig(cfg.LLM)
@@ -211,6 +228,7 @@ func NewRootModelWithConfig(
 		launcher:        components.NewLauncherModel(styles),
 		llmConfig:       components.NewLLMConfigModel(styles),
 		modal:           components.NewModalModel(styles),
+		searchModal:     components.NewSearchModalModel(styles),
 		navbar:          components.NewNavbarModel(styles),
 		sidebar:         components.NewSidebarModel(chapRepo, charRepo, styles),
 		editor:          components.NewEditorModel(styles),
@@ -219,6 +237,16 @@ func NewRootModelWithConfig(
 		activeFocus:     messages.FocusSidebar,
 		styles:          styles,
 		keys:            DefaultRootKeyMap(),
+	}
+
+	if chapRepo != nil {
+		m.searchService = service.NewSearchService(chapRepo)
+		m.searchModal.SearchFunc = func(query string, caseSensitive bool) ([]domain.SearchMatch, error) {
+			if m.searchService != nil {
+				return m.searchService.Search(query, caseSensitive)
+			}
+			return nil, nil
+		}
 	}
 
 	m.launcher.SetRootDir(cfg.RootDir)
@@ -236,6 +264,7 @@ func (m RootModel) Init() tea.Cmd {
 	var cmds []tea.Cmd
 	cmds = append(cmds,
 		m.modal.Init(),
+		m.searchModal.Init(),
 		m.launcher.Init(),
 		m.llmConfig.Init(),
 		m.navbar.Init(),
@@ -354,6 +383,13 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.chapterRepo = chapRepo
 		m.characterRepo = charRepo
+		m.searchService = service.NewSearchService(chapRepo)
+		m.searchModal.SearchFunc = func(query string, caseSensitive bool) ([]domain.SearchMatch, error) {
+			if m.searchService != nil {
+				return m.searchService.Search(query, caseSensitive)
+			}
+			return nil, nil
+		}
 
 		brainPath := filepath.Join(targetPath, ".novel", "brain.db")
 		brainRepo, err := repository.NewSQLiteBrainRepository(brainPath)
@@ -433,6 +469,90 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var mCmd tea.Cmd
 		m.modal, mCmd = m.modal.Update(msg)
 		return m, mCmd
+
+	case messages.OpenGlobalSearchMsg:
+		var smCmd tea.Cmd
+		m.searchModal, smCmd = m.searchModal.Update(msg)
+		return m, smCmd
+
+	case messages.CloseGlobalSearchMsg:
+		var smCmd tea.Cmd
+		m.searchModal, smCmd = m.searchModal.Update(msg)
+		return m, smCmd
+
+	case messages.JumpToMatchMsg:
+		targetMatch := msg.Match
+		m.searchModal.Hide()
+
+		var chap domain.Chapter
+		if m.chapterRepo != nil {
+			content, err := m.chapterRepo.LoadContent(targetMatch.ChapterID)
+			if err == nil {
+				chap = domain.Chapter{
+					ID:        targetMatch.ChapterID,
+					Title:     targetMatch.ChapterTitle,
+					FilePath:  targetMatch.FilePath,
+					Content:   content,
+					WordCount: service.CalculateMetrics(content, false).WordCount,
+				}
+			}
+		}
+		if chap.ID == "" {
+			chap = domain.Chapter{
+				ID:       targetMatch.ChapterID,
+				Title:    targetMatch.ChapterTitle,
+				FilePath: targetMatch.FilePath,
+			}
+		}
+
+		m.navbar.SetChapterTitle(chap.Title)
+		for i, ch := range m.sidebar.Chapters {
+			if ch.ID == chap.ID {
+				m.sidebar.SelectedChapter = i
+				break
+			}
+		}
+		m.editor, _ = m.editor.Update(messages.ChapterSelectedMsg{Chapter: chap})
+		m.statusbar, _ = m.statusbar.Update(messages.ChapterSelectedMsg{Chapter: chap})
+		m.editor.SetCursorPosition(targetMatch.LineNumber, targetMatch.Column)
+
+		m.activeFocus = messages.FocusEditor
+		m.sidebar.Focused = false
+		m.editor.Focused = true
+		cmds = append(cmds, func() tea.Msg { return messages.FocusMsg{Target: messages.FocusEditor} })
+		return m, tea.Batch(cmds...)
+
+	case messages.GlobalReplaceMsg:
+		if m.searchService != nil {
+			res, err := m.searchService.ReplaceAll(msg.Query, msg.Replacement, msg.CaseSensitive)
+			if err != nil {
+				cmds = append(cmds, func() tea.Msg {
+					return messages.NotificationMsg{
+						Message: fmt.Sprintf("Error al reemplazar: %v", err),
+						IsError: true,
+					}
+				})
+			} else {
+				if m.chapterRepo != nil && m.editor.ActiveChapter.ID != "" {
+					content, err := m.chapterRepo.LoadContent(m.editor.ActiveChapter.ID)
+					if err == nil {
+						m.editor.ActiveChapter.Content = content
+						m.editor, _ = m.editor.Update(messages.ChapterSelectedMsg{Chapter: m.editor.ActiveChapter})
+					}
+				}
+				cmds = append(cmds,
+					func() tea.Msg {
+						return messages.NotificationMsg{
+							Message: fmt.Sprintf("✓ Reemplazadas %d ocurrencias en %d capítulos", res.TotalReplaced, res.ChaptersAffected),
+							IsError: false,
+						}
+					},
+					func() tea.Msg { return messages.ReloadChaptersMsg{} },
+					func() tea.Msg { return messages.GlobalReplaceCompletedMsg{Result: res} },
+				)
+			}
+		}
+		return m, tea.Batch(cmds...)
 
 	case messages.HideModalMsg:
 		var mCmd tea.Cmd
@@ -695,6 +815,11 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(sCmd, eCmd, cCmd)
 
 	case tea.MouseMsg:
+		if m.searchModal.Active {
+			var smCmd tea.Cmd
+			m.searchModal, smCmd = m.searchModal.Update(msg)
+			return m, smCmd
+		}
 		if m.modal.Active {
 			var mCmd tea.Cmd
 			m.modal, mCmd = m.modal.Update(msg)
@@ -768,6 +893,11 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		if m.searchModal.Active {
+			var smCmd tea.Cmd
+			m.searchModal, smCmd = m.searchModal.Update(msg)
+			return m, smCmd
+		}
 		if m.modal.Active {
 			var mCmd tea.Cmd
 			m.modal, mCmd = m.modal.Update(msg)
@@ -799,6 +929,11 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case key.Matches(msg, m.keys.ToggleChat):
 				return m, func() tea.Msg {
 					return messages.ToggleChatDrawerMsg{}
+				}
+
+			case key.Matches(msg, m.keys.Search):
+				return m, func() tea.Msg {
+					return messages.OpenGlobalSearchMsg{}
 				}
 
 			case key.Matches(msg, m.keys.NewChapter):
@@ -887,17 +1022,18 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Forward non-key messages to child components
-	var lCmd, cfgCmd, mCmd, navCmd, sCmd, eCmd, cCmd, stCmd tea.Cmd
+	var lCmd, cfgCmd, mCmd, smCmd, navCmd, sCmd, eCmd, cCmd, stCmd tea.Cmd
 	m.launcher, lCmd = m.launcher.Update(msg)
 	m.llmConfig, cfgCmd = m.llmConfig.Update(msg)
 	m.modal, mCmd = m.modal.Update(msg)
+	m.searchModal, smCmd = m.searchModal.Update(msg)
 	m.navbar, navCmd = m.navbar.Update(msg)
 	m.sidebar, sCmd = m.sidebar.Update(msg)
 	m.editor, eCmd = m.editor.Update(msg)
 	m.chatDrawer, cCmd = m.chatDrawer.Update(msg)
 	m.statusbar, stCmd = m.statusbar.Update(msg)
 
-	cmds = append(cmds, lCmd, cfgCmd, mCmd, navCmd, sCmd, eCmd, cCmd, stCmd)
+	cmds = append(cmds, lCmd, cfgCmd, mCmd, smCmd, navCmd, sCmd, eCmd, cCmd, stCmd)
 	return m, tea.Batch(cmds...)
 }
 
@@ -925,6 +1061,7 @@ func (m *RootModel) recalculateLayout() {
 	}
 
 	m.modal.SetSize(m.width, m.height)
+	m.searchModal.SetSize(m.width, m.height)
 	m.launcher.SetSize(m.width, m.height)
 	m.llmConfig.SetSize(m.width, m.height)
 
@@ -1026,6 +1163,10 @@ func (m RootModel) View() string {
 		}
 		statusView := m.statusbar.View()
 		baseView = lipgloss.JoinVertical(lipgloss.Left, navView, mainView, statusView)
+	}
+
+	if m.searchModal.Active {
+		return m.searchModal.View()
 	}
 
 	if m.modal.Active {

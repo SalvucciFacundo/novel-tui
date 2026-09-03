@@ -198,6 +198,43 @@ func (m EditorModel) Value() string {
 	return m.textarea.Value()
 }
 
+// Line returns the current 0-indexed line of the cursor.
+func (m EditorModel) Line() int {
+	return m.textarea.Line()
+}
+
+// GotoLine moves the cursor to the specified 1-indexed line.
+func (m *EditorModel) GotoLine(line int) {
+	// Move to the very top line
+	for m.textarea.Line() > 0 {
+		m.textarea.CursorUp()
+	}
+	m.textarea.SetCursor(0)
+
+	targetLineIdx := line - 1
+	if targetLineIdx < 0 {
+		targetLineIdx = 0
+	}
+	lineCount := m.textarea.LineCount()
+	if targetLineIdx >= lineCount {
+		targetLineIdx = lineCount - 1
+	}
+
+	for m.textarea.Line() < targetLineIdx {
+		m.textarea.CursorDown()
+	}
+}
+
+// SetCursorPosition moves the cursor to the specified 1-indexed line and column.
+func (m *EditorModel) SetCursorPosition(line, col int) {
+	m.GotoLine(line)
+	if col > 1 {
+		m.textarea.SetCursor(col - 1)
+	} else {
+		m.textarea.SetCursor(0)
+	}
+}
+
 // View renders the editor panel.
 func (m EditorModel) View() string {
 	panelStyle := m.styles.BlurredPanel

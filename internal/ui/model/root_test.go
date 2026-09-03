@@ -430,3 +430,113 @@ func TestRootModel_OpenNovel_SetsBrainRepoInSidebar(t *testing.T) {
 		t.Errorf("expected Torre Oscura fact to be visible in editor view sidebar: %s", view)
 	}
 }
+
+func TestRootModel_GlobalSearchAndJumpToMatch(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	novelMeta, err := workspaceMgr.CreateNovel(tempDir, "Novela de Busqueda")
+	if err != nil {
+		t.Fatalf("failed to create novel: %v", err)
+	}
+
+	// Create chapters
+	chapRepo, err := repository.NewFileChapterRepository(novelMeta.AbsolutePath)
+	if err != nil {
+		t.Fatalf("failed to init chap repo: %v", err)
+	}
+	_ = chapRepo.SaveContent("01_capitulo_1", "El dragón descansaba en la caverna.")
+	ch2, _ := chapRepo.Create("Capítulo 2")
+	_ = chapRepo.SaveContent(ch2.ID, "Línea 1 vacía\nEl dragón rugió en las sombras.")
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateLauncher, tempDir)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+
+	// Open novel
+	m, _ = m.Update(messages.OpenNovelMsg{Path: novelMeta.AbsolutePath})
+
+	// Trigger Search via Ctrl+F
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlF})
+	if cmd != nil {
+		msg := cmd()
+		if msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "Búsqueda") {
+		t.Errorf("expected search modal to be rendered in view, got:\n%s", view)
+	}
+
+	// Send JumpToMatchMsg targeting Chapter 2, line 2
+	match := domain.SearchMatch{
+		ChapterID:    ch2.ID,
+		ChapterTitle: ch2.Title,
+		FilePath:     ch2.FilePath,
+		LineNumber:   2,
+		Column:       4,
+		LineText:     "El dragón rugió en las sombras.",
+		MatchText:    "dragón",
+	}
+	m, _ = m.Update(messages.JumpToMatchMsg{Match: match})
+
+	postJumpView := m.View()
+	if strings.Contains(postJumpView, "Búsqueda Global") {
+		t.Errorf("expected search modal to close after JumpToMatch")
+	}
+	if !strings.Contains(postJumpView, "Capítulo 2") {
+		t.Errorf("expected navbar / editor to show Capítulo 2 after jump, got:\n%s", postJumpView)
+	}
+}
+
+func TestRootModel_GlobalReplace(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	novelMeta, err := workspaceMgr.CreateNovel(tempDir, "Novela de Reemplazo")
+	if err != nil {
+		t.Fatalf("failed to create novel: %v", err)
+	}
+
+	chapRepo, err := repository.NewFileChapterRepository(novelMeta.AbsolutePath)
+	if err != nil {
+		t.Fatalf("failed to init chap repo: %v", err)
+	}
+	_ = chapRepo.SaveContent("01_capitulo_1", "El dragón dormía.")
+	ch2, _ := chapRepo.Create("Capítulo 2")
+	_ = chapRepo.SaveContent(ch2.ID, "Un dragón despierto.")
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateLauncher, tempDir)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	m, _ = m.Update(messages.OpenNovelMsg{Path: novelMeta.AbsolutePath})
+
+	// Execute Global Replace
+	m, cmd := m.Update(messages.GlobalReplaceMsg{
+		Query:         "dragón",
+		Replacement:   "fénix",
+		CaseSensitive: false,
+	})
+
+	if cmd != nil {
+		msg := cmd()
+		if msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+
+	// Verify files updated
+	c1Content, _ := chapRepo.LoadContent("01_capitulo_1")
+	if !strings.Contains(c1Content, "fénix") {
+		t.Errorf("expected c1 content to contain fénix, got: %s", c1Content)
+	}
+	c2Content, _ := chapRepo.LoadContent(ch2.ID)
+	if !strings.Contains(c2Content, "fénix") {
+		t.Errorf("expected c2 content to contain fénix, got: %s", c2Content)
+	}
+}
+
