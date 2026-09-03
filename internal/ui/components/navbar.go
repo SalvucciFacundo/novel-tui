@@ -18,6 +18,7 @@ const (
 	PillTabChapters
 	PillTabCharacters
 	PillTabNotes
+	PillTabBrain
 	PillToggleChat
 )
 
@@ -103,12 +104,14 @@ func (m NavbarModel) getHitZones() []pillHitZone {
 	pillChap := m.styles.NavbarActionPill.Render("[1: Capítulos]")
 	pillChar := m.styles.NavbarActionPill.Render("[2: Personajes]")
 	pillNotes := m.styles.NavbarActionPill.Render("[3: Notas]")
+	pillBrain := m.styles.NavbarActionPill.Render("[4: Brain]")
 	pillChat := m.styles.NavbarActionPill.Render("[🤖 Asistente IA (Ctrl+A)]")
 
 	rightSection := lipgloss.JoinHorizontal(lipgloss.Center,
 		pillChap, " ",
 		pillChar, " ",
 		pillNotes, " ",
+		pillBrain, " ",
 		pillChat, " ",
 	)
 	rightWidth := lipgloss.Width(rightSection)
@@ -142,6 +145,14 @@ func (m NavbarModel) getHitZones() []pillHitZone {
 		endX:   currentX + wNotes,
 	})
 	currentX += wNotes + 1
+
+	wBrain := lipgloss.Width(pillBrain)
+	zones = append(zones, pillHitZone{
+		id:     PillTabBrain,
+		startX: currentX,
+		endX:   currentX + wBrain,
+	})
+	currentX += wBrain + 1
 
 	wChat := lipgloss.Width(pillChat)
 	zones = append(zones, pillHitZone{
@@ -181,6 +192,10 @@ func (m NavbarModel) Update(msg tea.Msg) (NavbarModel, tea.Cmd) {
 					case PillTabNotes:
 						return m, func() tea.Msg {
 							return messages.SelectSidebarTabMsg{Tab: 2}
+						}
+					case PillTabBrain:
+						return m, func() tea.Msg {
+							return messages.SelectSidebarTabMsg{Tab: 3}
 						}
 					case PillToggleChat:
 						return m, func() tea.Msg {
@@ -224,12 +239,14 @@ func (m NavbarModel) View() string {
 	pillChap := m.styles.NavbarActionPill.Render("[1: Capítulos]")
 	pillChar := m.styles.NavbarActionPill.Render("[2: Personajes]")
 	pillNotes := m.styles.NavbarActionPill.Render("[3: Notas]")
+	pillBrain := m.styles.NavbarActionPill.Render("[4: Brain]")
 	pillChat := m.styles.NavbarActionPill.Render("[🤖 Asistente IA (Ctrl+A)]")
 
 	rightSection := lipgloss.JoinHorizontal(lipgloss.Center,
 		pillChap, " ",
 		pillChar, " ",
 		pillNotes, " ",
+		pillBrain, " ",
 		pillChat, " ",
 	)
 	rightWidth := lipgloss.Width(rightSection)

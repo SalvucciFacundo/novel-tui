@@ -280,6 +280,31 @@ func TestContextBuilder(t *testing.T) {
 	if !strings.Contains(medPrompt, "Actúa como co-escritor creativo") {
 		t.Errorf("expected medium effort instruction")
 	}
+	// Test with BrainFacts
+	brainFacts := []domain.BrainFact{
+		{
+			Topic:   "Personajes",
+			Concept: "Kuno",
+			Fact:    "Perdió el brazo izquierdo",
+		},
+		{
+			Topic:   "Lore",
+			Concept: "Espada del Alba",
+			Fact:    "Brilla en presencia de sombras",
+		},
+	}
+	brainPrompt := builder.BuildContext(llm.ContextParams{
+		BrainFacts: brainFacts,
+	})
+	if !strings.Contains(brainPrompt, "--- MEMORIA DE CONTINUIDAD Y HECHOS (BRAIN) ---") {
+		t.Errorf("expected brain header in context")
+	}
+	if !strings.Contains(brainPrompt, "• [Personajes] Kuno: Perdió el brazo izquierdo") {
+		t.Errorf("expected Kuno brain fact in context")
+	}
+	if !strings.Contains(brainPrompt, "• [Lore] Espada del Alba: Brilla en presencia de sombras") {
+		t.Errorf("expected Espada brain fact in context")
+	}
 }
 
 func TestContextBuilder_Truncation(t *testing.T) {

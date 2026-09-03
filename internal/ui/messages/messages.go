@@ -177,3 +177,8 @@ type SetEffortLevelMsg struct {
 	EffortLevel domain.LLMEffortLevel
 }
 
+// BrainActivityMsg is emitted when Brain extracts, indexes, or updates facts/summaries.
+type BrainActivityMsg struct {
+	Event domain.BrainActivityEvent
+}
+

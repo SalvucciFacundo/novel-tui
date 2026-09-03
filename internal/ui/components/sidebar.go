@@ -1,6 +1,7 @@
 package components
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,6 +24,7 @@ const (
 	TabChapters SidebarTab = iota
 	TabCharacters
 	TabNotes
+	TabBrain
 
 	// TabLore is an alias for TabCharacters for backward compatibility.
 	TabLore = TabCharacters
@@ -73,17 +75,20 @@ func DefaultSidebarKeyMap() SidebarKeyMap {
 	}
 }
 
-// SidebarModel manages the left sidebar panel state, 3-tab navigation, and notes editing.
+// SidebarModel manages the left sidebar panel state, 4-tab navigation, and notes editing.
 type SidebarModel struct {
 	chapterRepo   domain.ChapterRepository
 	characterRepo domain.CharacterRepository
+	brainRepo     domain.BrainRepository
 	novelPath     string
 
-	ActiveTab       SidebarTab
-	Chapters        []domain.Chapter
-	Characters      []domain.Character
-	SelectedChapter int
-	SelectedChar    int
+	ActiveTab         SidebarTab
+	Chapters          []domain.Chapter
+	Characters        []domain.Character
+	BrainFacts        []domain.BrainFact
+	SelectedChapter   int
+	SelectedChar      int
+	SelectedBrainFact int
 
 	notesTextarea textarea.Model
 
@@ -117,12 +122,19 @@ func NewSidebarModel(
 	}
 }
 
-// Init loads initial chapters and characters.
+// Init loads initial chapters, characters, and facts.
 func (m SidebarModel) Init() tea.Cmd {
-	if m.chapterRepo == nil && m.characterRepo == nil {
+	if m.chapterRepo == nil && m.characterRepo == nil && m.brainRepo == nil {
 		return nil
 	}
-	return m.ReloadDataCmd()
+	var cmds []tea.Cmd
+	if m.chapterRepo != nil || m.characterRepo != nil {
+		cmds = append(cmds, m.ReloadDataCmd())
+	}
+	if m.brainRepo != nil {
+		cmds = append(cmds, m.ReloadBrainFactsCmd())
+	}
+	return tea.Batch(cmds...)
 }
 
 // SetNovelPath updates the active novel root directory and loads notas.txt if present.
@@ -154,6 +166,32 @@ func (m *SidebarModel) SaveNotes() error {
 // NotesValue returns current notes text buffer.
 func (m SidebarModel) NotesValue() string {
 	return m.notesTextarea.Value()
+}
+
+// SetBrainRepository updates the active brain repository and reloads facts.
+func (m *SidebarModel) SetBrainRepository(brainRepo domain.BrainRepository) tea.Cmd {
+	m.brainRepo = brainRepo
+	m.SelectedBrainFact = 0
+	return m.ReloadBrainFactsCmd()
+}
+
+// ReloadBrainFactsCmd fetches recent brain facts from the repository.
+func (m *SidebarModel) ReloadBrainFactsCmd() tea.Cmd {
+	if m.brainRepo == nil {
+		return nil
+	}
+	repo := m.brainRepo
+	return func() tea.Msg {
+		facts, err := repo.ListRecentFacts(context.Background(), 100)
+		if err != nil {
+			return brainFactsLoadedMsg{facts: nil}
+		}
+		return brainFactsLoadedMsg{facts: facts}
+	}
+}
+
+type brainFactsLoadedMsg struct {
+	facts []domain.BrainFact
 }
 
 // ReloadDataCmd fetches chapters and characters from repositories.
@@ -196,6 +234,18 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 			m.SelectedChar = len(m.Characters) - 1
 		}
 
+	case brainFactsLoadedMsg:
+		m.BrainFacts = msg.facts
+		if m.SelectedBrainFact >= len(m.BrainFacts) && len(m.BrainFacts) > 0 {
+			m.SelectedBrainFact = len(m.BrainFacts) - 1
+		}
+		if len(m.BrainFacts) == 0 {
+			m.SelectedBrainFact = 0
+		}
+
+	case messages.BrainActivityMsg:
+		cmds = append(cmds, m.ReloadBrainFactsCmd())
+
 	case messages.ReloadChaptersMsg:
 		cmds = append(cmds, m.ReloadDataCmd())
 
@@ -213,10 +263,12 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 
 	case messages.SelectSidebarTabMsg:
 		tab := SidebarTab(msg.Tab)
-		if tab >= TabChapters && tab <= TabNotes {
+		if tab >= TabChapters && tab <= TabBrain {
 			m.ActiveTab = tab
 			if m.ActiveTab == TabNotes && m.Focused {
 				cmds = append(cmds, m.notesTextarea.Focus())
+			} else {
+				m.notesTextarea.Blur()
 			}
 		}
 
@@ -234,6 +286,10 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 				if m.SelectedChar > 0 {
 					m.SelectedChar--
 				}
+			} else if m.ActiveTab == TabBrain {
+				if m.SelectedBrainFact > 0 {
+					m.SelectedBrainFact--
+				}
 			} else {
 				m.notesTextarea.CursorUp()
 			}
@@ -248,6 +304,10 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 				if m.SelectedChar < len(m.Characters)-1 {
 					m.SelectedChar++
 				}
+			} else if m.ActiveTab == TabBrain {
+				if m.SelectedBrainFact < len(m.BrainFacts)-1 {
+					m.SelectedBrainFact++
+				}
 			} else {
 				m.notesTextarea.CursorDown()
 			}
@@ -256,20 +316,23 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 		case tea.MouseLeft:
 			m.Focused = true
 			if msg.Y <= 2 {
-				// Header tabs click detection
-				third := m.Width / 3
-				if third <= 0 {
-					third = 10
+				// Header tabs click detection across 4 tabs
+				quarter := m.Width / 4
+				if quarter <= 0 {
+					quarter = 7
 				}
-				if msg.X < third {
+				if msg.X < quarter {
 					m.ActiveTab = TabChapters
 					m.notesTextarea.Blur()
-				} else if msg.X < third*2 {
+				} else if msg.X < quarter*2 {
 					m.ActiveTab = TabCharacters
 					m.notesTextarea.Blur()
-				} else {
+				} else if msg.X < quarter*3 {
 					m.ActiveTab = TabNotes
 					cmds = append(cmds, m.notesTextarea.Focus())
+				} else {
+					m.ActiveTab = TabBrain
+					m.notesTextarea.Blur()
 				}
 				return m, tea.Batch(cmds...)
 			}
@@ -288,6 +351,12 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 					charIdx := msg.Y - 3
 					if charIdx >= 0 && charIdx < len(m.Characters) {
 						m.SelectedChar = charIdx
+						return m, nil
+					}
+				} else if m.ActiveTab == TabBrain {
+					factIdx := (msg.Y - 4) / 2
+					if factIdx >= 0 && factIdx < len(m.BrainFacts) {
+						m.SelectedBrainFact = factIdx
 						return m, nil
 					}
 				} else if m.ActiveTab == TabNotes {
@@ -317,7 +386,7 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 				return m, nil
 			}
 			if key.Matches(msg, m.keys.NextTab) && msg.String() == "]" {
-				m.ActiveTab = TabChapters
+				m.ActiveTab = TabBrain
 				m.notesTextarea.Blur()
 				return m, nil
 			}
@@ -328,7 +397,7 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 
-		// In TabChapters or TabCharacters:
+		// In TabChapters, TabCharacters, or TabBrain:
 		switch {
 		case msg.String() == "1":
 			m.ActiveTab = TabChapters
@@ -337,42 +406,72 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 		case msg.String() == "3":
 			m.ActiveTab = TabNotes
 			cmds = append(cmds, m.notesTextarea.Focus())
+		case msg.String() == "4":
+			m.ActiveTab = TabBrain
 		case key.Matches(msg, m.keys.PrevTab):
-			if m.ActiveTab == TabNotes {
-				m.ActiveTab = TabCharacters
-			} else if m.ActiveTab == TabCharacters {
+			switch m.ActiveTab {
+			case TabChapters:
+				m.ActiveTab = TabBrain
+			case TabCharacters:
 				m.ActiveTab = TabChapters
-			} else {
+			case TabNotes:
+				m.ActiveTab = TabCharacters
+				m.notesTextarea.Blur()
+			case TabBrain:
 				m.ActiveTab = TabNotes
 				cmds = append(cmds, m.notesTextarea.Focus())
 			}
 		case key.Matches(msg, m.keys.NextTab):
-			if m.ActiveTab == TabChapters {
+			switch m.ActiveTab {
+			case TabChapters:
 				m.ActiveTab = TabCharacters
-			} else if m.ActiveTab == TabCharacters {
+			case TabCharacters:
 				m.ActiveTab = TabNotes
 				cmds = append(cmds, m.notesTextarea.Focus())
-			} else {
+			case TabNotes:
+				m.ActiveTab = TabBrain
+				m.notesTextarea.Blur()
+			case TabBrain:
 				m.ActiveTab = TabChapters
 			}
 		case key.Matches(msg, m.keys.Up):
-			if m.ActiveTab == TabChapters {
+			switch m.ActiveTab {
+			case TabChapters:
 				if m.SelectedChapter > 0 {
 					m.SelectedChapter--
 				}
-			} else {
+			case TabCharacters:
 				if m.SelectedChar > 0 {
 					m.SelectedChar--
 				}
+			case TabBrain:
+				if m.SelectedBrainFact > 0 {
+					m.SelectedBrainFact--
+				}
 			}
 		case key.Matches(msg, m.keys.Down):
-			if m.ActiveTab == TabChapters {
+			switch m.ActiveTab {
+			case TabChapters:
 				if m.SelectedChapter < len(m.Chapters)-1 {
 					m.SelectedChapter++
 				}
-			} else {
+			case TabCharacters:
 				if m.SelectedChar < len(m.Characters)-1 {
 					m.SelectedChar++
+				}
+			case TabBrain:
+				if m.SelectedBrainFact < len(m.BrainFacts)-1 {
+					m.SelectedBrainFact++
+				}
+			}
+		case m.ActiveTab == TabBrain && (msg.String() == "d" || msg.String() == "x"):
+			if m.brainRepo != nil && len(m.BrainFacts) > 0 && m.SelectedBrainFact < len(m.BrainFacts) {
+				factToDelete := m.BrainFacts[m.SelectedBrainFact]
+				repo := m.brainRepo
+				return m, func() tea.Msg {
+					_ = repo.DeleteFact(context.Background(), factToDelete.ID)
+					facts, _ := repo.ListRecentFacts(context.Background(), 100)
+					return brainFactsLoadedMsg{facts: facts}
 				}
 			}
 		case key.Matches(msg, m.keys.Select):
@@ -424,30 +523,38 @@ func (m *SidebarModel) SetSize(w, h int) {
 	m.notesTextarea.SetHeight(innerH)
 }
 
-// View renders the 3-tab sidebar panel.
+// View renders the 4-tab sidebar panel.
 func (m SidebarModel) View() string {
 	contentWidth := m.Width - 2 // account for borders
 	if contentWidth < 0 {
 		contentWidth = 0
 	}
 
-	// 1. Header with 3 Tabs
-	var tab1, tab2, tab3 string
+	// 1. Header with 4 Tabs
+	var tab1, tab2, tab3, tab4 string
 	if m.ActiveTab == TabChapters {
 		tab1 = m.styles.TabActive.Render("1: Capítulos")
 		tab2 = m.styles.TabInactive.Render("2: Personajes")
 		tab3 = m.styles.TabInactive.Render("3: Notas")
+		tab4 = m.styles.TabInactive.Render("4: Brain")
 	} else if m.ActiveTab == TabCharacters {
 		tab1 = m.styles.TabInactive.Render("1: Capítulos")
 		tab2 = m.styles.TabActive.Render("2: Personajes")
 		tab3 = m.styles.TabInactive.Render("3: Notas")
-	} else {
+		tab4 = m.styles.TabInactive.Render("4: Brain")
+	} else if m.ActiveTab == TabNotes {
 		tab1 = m.styles.TabInactive.Render("1: Capítulos")
 		tab2 = m.styles.TabInactive.Render("2: Personajes")
 		tab3 = m.styles.TabActive.Render("3: Notas")
+		tab4 = m.styles.TabInactive.Render("4: Brain")
+	} else {
+		tab1 = m.styles.TabInactive.Render("1: Capítulos")
+		tab2 = m.styles.TabInactive.Render("2: Personajes")
+		tab3 = m.styles.TabInactive.Render("3: Notas")
+		tab4 = m.styles.TabActive.Render("4: Brain")
 	}
 
-	header := lipgloss.JoinHorizontal(lipgloss.Top, tab1, " ", tab2, " ", tab3)
+	header := lipgloss.JoinHorizontal(lipgloss.Top, tab1, " ", tab2, " ", tab3, " ", tab4)
 	header = m.styles.SidebarHeader.Width(contentWidth).Render(header)
 
 	// 2. Tab Content
@@ -459,6 +566,8 @@ func (m SidebarModel) View() string {
 		body = m.renderLoreView(contentWidth)
 	case TabNotes:
 		body = m.renderNotesView(contentWidth)
+	case TabBrain:
+		body = m.renderBrainTab(contentWidth)
 	}
 
 	// Combine header and body
@@ -557,4 +666,73 @@ func (m SidebarModel) renderNotesView(width int) string {
 		Padding(0, 1).
 		Width(width).
 		Render(m.notesTextarea.View())
+}
+
+func (m SidebarModel) renderBrainTab(width int) string {
+	if len(m.BrainFacts) == 0 {
+		return m.styles.ListSubtitle.Render("\n  🧠 Brain está activo y aprendiendo\n  de tus textos y conversaciones...")
+	}
+
+	headerText := m.styles.ListSubtitle.Render(fmt.Sprintf("\n  🧠 Memoria Brain (%d hechos)", len(m.BrainFacts)))
+
+	var items []string
+	for i, fact := range m.BrainFacts {
+		prefix := "  "
+		if i == m.SelectedBrainFact {
+			prefix = "▶ "
+		}
+
+		concept := fact.Concept
+		if concept == "" {
+			concept = fact.Topic
+		}
+
+		topicBadge := fmt.Sprintf("[%s]", fact.Topic)
+		itemTitle := fmt.Sprintf("%s%s %s", prefix, concept, topicBadge)
+		if len(itemTitle) > width-4 && width > 7 {
+			itemTitle = itemTitle[:width-7] + "..."
+		}
+
+		var renderedTitle string
+		if i == m.SelectedBrainFact {
+			renderedTitle = m.styles.ListItemActive.Width(width).Render(itemTitle)
+		} else {
+			renderedTitle = m.styles.ListItem.Width(width).Render(itemTitle)
+		}
+
+		factSnippet := fact.Fact
+		if len(factSnippet) > width-8 && width > 11 {
+			factSnippet = factSnippet[:width-11] + "..."
+		}
+		renderedSub := m.styles.ListSubtitle.Render(fmt.Sprintf("    %s", factSnippet))
+
+		items = append(items, renderedTitle, renderedSub)
+	}
+
+	listSection := strings.Join(items, "\n")
+
+	// Selected fact detail card
+	if m.SelectedBrainFact < len(m.BrainFacts) {
+		selected := m.BrainFacts[m.SelectedBrainFact]
+		var cardElements []string
+
+		cardElements = append(cardElements, m.styles.CardName.Render("🧠 "+selected.Concept))
+		cardElements = append(cardElements, m.styles.CardRole.Render(fmt.Sprintf("Tipo: %s | Tema: %s", selected.Type, selected.Topic)))
+		cardElements = append(cardElements, m.styles.CardDescription.Width(width-4).Render(selected.Fact))
+
+		if len(selected.Tags) > 0 {
+			cardElements = append(cardElements, m.styles.CardNotes.Width(width-4).Render(fmt.Sprintf("Tags: %s", strings.Join(selected.Tags, ", "))))
+		}
+		if selected.ChapterID != "" {
+			cardElements = append(cardElements, m.styles.CardNotes.Width(width-4).Render(fmt.Sprintf("Capítulo: %s", selected.ChapterID)))
+		}
+		cardElements = append(cardElements, m.styles.ListSubtitle.Render("[d] Borrar hecho"))
+
+		cardContent := lipgloss.JoinVertical(lipgloss.Left, cardElements...)
+		card := m.styles.CardContainer.Width(width - 2).Render(cardContent)
+
+		return lipgloss.JoinVertical(lipgloss.Left, headerText, listSection, "\n", card)
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, headerText, listSection)
 }

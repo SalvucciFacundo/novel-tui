@@ -36,6 +36,8 @@ type ChatDrawerModel struct {
 	height  int
 	Focused bool
 
+	brainNotification string
+
 	styles theme.Styles
 }
 
@@ -132,6 +134,16 @@ func (m *ChatDrawerModel) NewSession() {
 // ActiveSession returns the current active ChatSession.
 func (m ChatDrawerModel) ActiveSession() domain.ChatSession {
 	return m.session
+}
+
+// LastAssistantMessage returns the content of the most recent assistant message.
+func (m ChatDrawerModel) LastAssistantMessage() string {
+	for i := len(m.session.Messages) - 1; i >= 0; i-- {
+		if m.session.Messages[i].Role == "assistant" && strings.TrimSpace(m.session.Messages[i].Content) != "" {
+			return m.session.Messages[i].Content
+		}
+	}
+	return ""
 }
 
 // IsGenerating returns whether a stream response is currently being received.
@@ -259,6 +271,11 @@ func (m ChatDrawerModel) Update(msg tea.Msg) (ChatDrawerModel, tea.Cmd) {
 	case messages.SetEffortLevelMsg:
 		m.SetEffortLevel(msg.EffortLevel)
 
+	case messages.BrainActivityMsg:
+		m.brainNotification = msg.Event.Description
+		m.renderHistory()
+		m.viewport.GotoBottom()
+
 	case tea.KeyMsg:
 		if !m.Focused {
 			return m, nil
@@ -377,7 +394,12 @@ func (m ChatDrawerModel) Update(msg tea.Msg) (ChatDrawerModel, tea.Cmd) {
 
 func (m *ChatDrawerModel) renderHistory() {
 	if len(m.session.Messages) == 0 {
-		m.viewport.SetContent(m.styles.ListSubtitle.Render("Inicia una conversación con tu asistente de escritura...\n\nPresiona Enter para enviar."))
+		baseText := "Inicia una conversación con tu asistente de escritura...\n\nPresiona Enter para enviar."
+		if m.brainNotification != "" {
+			brainStyle := lipgloss.NewStyle().Foreground(theme.CurrentTheme.Highlight).Italic(true)
+			baseText += "\n\n" + brainStyle.Render(m.brainNotification)
+		}
+		m.viewport.SetContent(m.styles.ListSubtitle.Render(baseText))
 		return
 	}
 
@@ -408,6 +430,13 @@ func (m *ChatDrawerModel) renderHistory() {
 			content = "Pensando..."
 		}
 		sb.WriteString(content + "\n")
+	}
+
+	if m.brainNotification != "" {
+		brainStyle := lipgloss.NewStyle().
+			Foreground(theme.CurrentTheme.Highlight).
+			Italic(true)
+		sb.WriteString("\n" + brainStyle.Render(m.brainNotification) + "\n")
 	}
 
 	m.viewport.SetContent(sb.String())

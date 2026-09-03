@@ -1,6 +1,7 @@
 package components_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -414,5 +415,179 @@ func TestChatDrawerComponent(t *testing.T) {
 	}
 	if !strings.Contains(view, "Hola mundo") {
 		t.Errorf("expected drawer view to contain 'Hola mundo'")
+	}
+}
+
+func TestNavbarBrainTab(t *testing.T) {
+	styles := theme.DefaultStyles
+	nav := components.NewNavbarModel(styles)
+	nav.SetWidth(140)
+	nav.SetNovelTitle("Mi Novela")
+
+	view := nav.View()
+	if !strings.Contains(view, "4: Brain") {
+		t.Errorf("expected '4: Brain' pill in navbar view, got: %s", view)
+	}
+
+	// Click 4: Brain pill (around X = 100 in 140-width navbar)
+	// Let's test clicking through mouse message
+	zones := nav.View()
+	_ = zones
+
+	// Simulate clicking tab 4 pill
+	clicked := false
+	for x := 0; x < 140; x++ {
+		_, cmd := nav.Update(tea.MouseMsg{
+			X:    x,
+			Y:    0,
+			Type: tea.MouseLeft,
+		})
+		if cmd != nil {
+			msg := cmd()
+			if tabMsg, ok := msg.(messages.SelectSidebarTabMsg); ok && tabMsg.Tab == int(components.TabBrain) {
+				clicked = true
+				break
+			}
+		}
+	}
+	if !clicked {
+		t.Errorf("expected clicking [4: Brain] pill in navbar to emit SelectSidebarTabMsg with TabBrain")
+	}
+}
+
+func TestSidebarBrainTabAndFactManagement(t *testing.T) {
+	tempDir := t.TempDir()
+	chapRepo, _ := repository.NewFileChapterRepository(tempDir)
+	charRepo := repository.NewFileCharacterRepository(tempDir)
+	brainDbPath := filepath.Join(tempDir, "brain.db")
+	brainRepo, err := repository.NewSQLiteBrainRepository(brainDbPath)
+	if err != nil {
+		t.Fatalf("failed to create brain repo: %v", err)
+	}
+	defer brainRepo.Close()
+
+	ctx := context.Background()
+	_ = brainRepo.SaveFact(ctx, domain.BrainFact{
+		ID:      "fact-1",
+		Topic:   "Personajes",
+		Concept: "Kuno",
+		Fact:    "Kuno perdió el brazo izquierdo en el capítulo 3",
+		Type:    domain.FactTypeCharacter,
+		Tags:    []string{"protagonista", "combate"},
+	})
+	_ = brainRepo.SaveFact(ctx, domain.BrainFact{
+		ID:      "fact-2",
+		Topic:   "Magia",
+		Concept: "Espada del Sol",
+		Fact:    "Forjada con fuego sagrado",
+		Type:    domain.FactTypeLore,
+		Tags:    []string{"artefacto"},
+	})
+
+	styles := theme.DefaultStyles
+	sidebar := components.NewSidebarModel(chapRepo, charRepo, styles)
+	sidebar.SetSize(50, 24)
+	sidebar, _ = sidebar.Update(messages.FocusMsg{Target: messages.FocusSidebar})
+
+	// Set brain repo and execute the returned cmd
+	cmd := sidebar.SetBrainRepository(brainRepo)
+	if cmd != nil {
+		msg := cmd()
+		sidebar, _ = sidebar.Update(msg)
+	}
+
+	if len(sidebar.BrainFacts) != 2 {
+		t.Fatalf("expected 2 brain facts loaded in sidebar, got %d", len(sidebar.BrainFacts))
+	}
+
+	// 1. Switch directly to Tab 4: Brain via key '4'
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("4")})
+	if sidebar.ActiveTab != components.TabBrain {
+		t.Errorf("expected ActiveTab TabBrain on pressing '4', got %v", sidebar.ActiveTab)
+	}
+
+	// 2. View rendered content
+	view := sidebar.View()
+	if !strings.Contains(view, "Memoria Brain") {
+		t.Errorf("expected 'Memoria Brain' header in TabBrain view, got: %s", view)
+	}
+	if !strings.Contains(view, "Kuno") || !strings.Contains(view, "Espada del Sol") {
+		t.Errorf("expected facts concepts in TabBrain view, got: %s", view)
+	}
+	if !strings.Contains(view, "[d] Borrar hecho") {
+		t.Errorf("expected delete hint '[d] Borrar hecho' in TabBrain view, got: %s", view)
+	}
+
+	// 3. Tab cycling with '[' and ']' across all 4 tabs
+	// Current is TabBrain (3). Next tab ']' should wrap to TabChapters (0)
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("]")})
+	if sidebar.ActiveTab != components.TabChapters {
+		t.Errorf("expected TabChapters after cycling next from TabBrain, got %v", sidebar.ActiveTab)
+	}
+	// Prev tab '[' from TabChapters (0) should wrap to TabBrain (3)
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("[")})
+	if sidebar.ActiveTab != components.TabBrain {
+		t.Errorf("expected TabBrain after cycling prev from TabChapters, got %v", sidebar.ActiveTab)
+	}
+
+	// 4. Navigation inside TabBrain: Down/j, Up/k
+	sidebar.SelectedBrainFact = 0
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if sidebar.SelectedBrainFact != 1 {
+		t.Errorf("expected SelectedBrainFact == 1 after pressing 'j', got %d", sidebar.SelectedBrainFact)
+	}
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	if sidebar.SelectedBrainFact != 0 {
+		t.Errorf("expected SelectedBrainFact == 0 after pressing 'k', got %d", sidebar.SelectedBrainFact)
+	}
+
+	// 5. Delete selected fact via 'd'
+	sidebar, delCmd := sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	if delCmd != nil {
+		msg := delCmd()
+		sidebar, _ = sidebar.Update(msg)
+	}
+
+	// Check that facts decreased in repo and in sidebar
+	facts, _ := brainRepo.ListRecentFacts(ctx, 100)
+	if len(facts) != 1 {
+		t.Errorf("expected 1 fact in brain repo after deletion, got %d", len(facts))
+	}
+	if len(sidebar.BrainFacts) != 1 {
+		t.Errorf("expected 1 fact in sidebar after deletion, got %d", len(sidebar.BrainFacts))
+	}
+
+	// 6. Delete remaining fact to test empty state
+	sidebar, delCmd2 := sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	if delCmd2 != nil {
+		msg := delCmd2()
+		sidebar, _ = sidebar.Update(msg)
+	}
+	emptyView := sidebar.View()
+	if !strings.Contains(emptyView, "Brain está activo y aprendiendo") {
+		t.Errorf("expected empty state message in TabBrain view, got: %s", emptyView)
+	}
+
+	// 7. BrainActivityMsg updates facts list
+	_ = brainRepo.SaveFact(ctx, domain.BrainFact{
+		ID:      "fact-3",
+		Topic:   "Decisión",
+		Concept: "Ruta del Norte",
+		Fact:    "El grupo decide cruzar por las montañas",
+		Type:    domain.FactTypeDecision,
+	})
+	sidebar, actCmd := sidebar.Update(messages.BrainActivityMsg{
+		Event: domain.BrainActivityEvent{
+			Type:        "saved",
+			FactCount:   1,
+			Description: "🧠 Memorizado: 1 hecho",
+		},
+	})
+	if actCmd != nil {
+		msg := actCmd()
+		sidebar, _ = sidebar.Update(msg)
+	}
+	if len(sidebar.BrainFacts) != 1 {
+		t.Errorf("expected 1 fact in sidebar after BrainActivityMsg reload, got %d", len(sidebar.BrainFacts))
 	}
 }

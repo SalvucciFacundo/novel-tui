@@ -36,6 +36,7 @@ type ContextParams struct {
 	ActiveChapterTitle string
 	ActiveChapterText  string
 	EffortLevel        domain.LLMEffortLevel
+	BrainFacts         []domain.BrainFact
 }
 
 // BuildContext compiles the full system prompt from workspace data.
@@ -58,7 +59,16 @@ func (cb *ContextBuilder) BuildContext(params ContextParams) string {
 	sb.WriteString(cb.getEffortInstruction(params.EffortLevel))
 	sb.WriteString("\n\n")
 
-	// 3. Characters / Lore Block
+	// 3. Brain Memory & Continuity Block (FTS5 / Indexed Facts)
+	if len(params.BrainFacts) > 0 {
+		sb.WriteString("--- MEMORIA DE CONTINUIDAD Y HECHOS (BRAIN) ---\n")
+		for _, f := range params.BrainFacts {
+			sb.WriteString(fmt.Sprintf("• [%s] %s: %s\n", f.Topic, f.Concept, f.Fact))
+		}
+		sb.WriteString("\n\n")
+	}
+
+	// 4. Characters / Lore Block
 	if params.NovelDir != "" {
 		charsBlock := cb.loadCharacterLore(params.NovelDir)
 		if charsBlock != "" {

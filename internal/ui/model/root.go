@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -84,6 +85,8 @@ type RootModel struct {
 	chapterRepo     domain.ChapterRepository
 	characterRepo   domain.CharacterRepository
 	sessionRepo     domain.ChatSessionRepository
+	brainRepo       domain.BrainRepository
+	brainService    *service.BrainService
 
 	launcher   components.LauncherModel
 	llmConfig  components.LLMConfigModel
@@ -352,8 +355,21 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chapterRepo = chapRepo
 		m.characterRepo = charRepo
 
+		brainPath := filepath.Join(targetPath, ".novel", "brain.db")
+		brainRepo, err := repository.NewSQLiteBrainRepository(brainPath)
+		if err == nil {
+			if m.brainRepo != nil {
+				_ = m.brainRepo.Close()
+			}
+			m.brainRepo = brainRepo
+			m.brainService = service.NewBrainService(brainRepo)
+		}
+
 		sCmd := m.sidebar.SetRepositories(chapRepo, charRepo)
 		cmds = append(cmds, sCmd)
+		if m.brainRepo != nil {
+			cmds = append(cmds, m.sidebar.SetBrainRepository(m.brainRepo))
+		}
 
 		m.sidebar.SetNovelPath(targetPath)
 		if m.navbar.NovelTitle == "" {
@@ -505,12 +521,22 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		var brainFacts []domain.BrainFact
+		if m.brainService != nil {
+			queryText := msg.Content + " " + m.editor.ActiveChapter.Title
+			facts, err := m.brainService.SearchRelevantFacts(context.Background(), queryText, 5)
+			if err == nil {
+				brainFacts = facts
+			}
+		}
+
 		sysPrompt := builder.BuildContext(llm.ContextParams{
 			NovelDir:           m.activeNovelPath,
 			GenrePrompt:        genrePrompt,
 			ActiveChapterTitle: m.editor.ActiveChapter.Title,
 			ActiveChapterText:  m.editor.Value(),
 			EffortLevel:        msg.EffortLevel,
+			BrainFacts:         brainFacts,
 		})
 
 		activeSession := m.chatDrawer.ActiveSession()
@@ -587,7 +613,72 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.streamCancel = nil
 		var cCmd tea.Cmd
 		m.chatDrawer, cCmd = m.chatDrawer.Update(msg)
-		return m, cCmd
+		cmds = append(cmds, cCmd)
+
+		if m.brainService != nil && m.config != nil {
+			lastMsg := m.chatDrawer.LastAssistantMessage()
+			if strings.TrimSpace(lastMsg) != "" {
+				chapTitle := m.editor.ActiveChapter.Title
+				chapID := m.editor.ActiveChapter.ID
+				brainSvc := m.brainService
+				llmCfg := m.config.LLM
+
+				cmds = append(cmds, func() tea.Msg {
+					extractPrompt := brainSvc.BuildExtractionPrompt(lastMsg, chapTitle)
+					provider, err := llm.NewProvider(llmCfg)
+					if err != nil {
+						return nil
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+					defer cancel()
+
+					req := domain.ChatRequest{
+						Model:       llmCfg.Model,
+						Temperature: 0.1,
+						Messages: []domain.ChatMessage{
+							{Role: "user", Content: extractPrompt},
+						},
+					}
+					ch, err := provider.StreamChat(ctx, req)
+					if err != nil {
+						return nil
+					}
+
+					var fullRes strings.Builder
+					for chunk := range ch {
+						if chunk.Err != nil {
+							break
+						}
+						fullRes.WriteString(chunk.Content)
+					}
+
+					facts, err := brainSvc.RecordAutoLearnedFacts(context.Background(), fullRes.String(), chapID)
+					if err == nil && len(facts) > 0 {
+						var concepts []string
+						for _, f := range facts {
+							concepts = append(concepts, f.Concept)
+						}
+						desc := fmt.Sprintf("🧠 [Brain] Memorizado: %d hecho(s) (%s)", len(facts), strings.Join(concepts, ", "))
+						return messages.BrainActivityMsg{
+							Event: domain.BrainActivityEvent{
+								Type:        "saved",
+								FactCount:   len(facts),
+								Description: desc,
+								Timestamp:   time.Now(),
+							},
+						}
+					}
+					return nil
+				})
+			}
+		}
+		return m, tea.Batch(cmds...)
+
+	case messages.BrainActivityMsg:
+		var sCmd, cCmd tea.Cmd
+		m.sidebar, sCmd = m.sidebar.Update(msg)
+		m.chatDrawer, cCmd = m.chatDrawer.Update(msg)
+		return m, tea.Batch(sCmd, cCmd)
 
 	case messages.StreamErrorMsg:
 		m.streamCancel = nil

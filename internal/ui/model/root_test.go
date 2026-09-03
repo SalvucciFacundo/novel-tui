@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/SalvucciFacundo/novel-tui/internal/domain"
 	"github.com/SalvucciFacundo/novel-tui/internal/repository"
 	"github.com/SalvucciFacundo/novel-tui/internal/service"
 	"github.com/SalvucciFacundo/novel-tui/internal/ui/messages"
@@ -340,5 +342,91 @@ func TestRootModel_ChatDrawer_TokenStreaming(t *testing.T) {
 	view := m.View()
 	if !strings.Contains(view, "Respuesta generada") {
 		t.Errorf("expected streamed response in chat drawer view, got:\n%s", view)
+	}
+}
+
+func TestRootModel_ChatDrawer_BrainActivity(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateEditor, tempDir)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m, _ = m.Update(messages.ToggleChatDrawerMsg{})
+
+	// Send BrainActivityMsg
+	m, _ = m.Update(messages.BrainActivityMsg{
+		Event: domain.BrainActivityEvent{
+			Type:        "saved",
+			FactCount:   2,
+			Description: "🧠 [Brain] Memorizado: 2 hecho(s) (Kuno, Espada)",
+		},
+	})
+
+	view := m.View()
+	if !strings.Contains(view, "🧠 [Brain] Memorizado") {
+		t.Errorf("expected brain notification in chat view, got:\n%s", view)
+	}
+}
+
+func TestRootModel_OpenNovel_SetsBrainRepoInSidebar(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	novelMeta, err := workspaceMgr.CreateNovel(tempDir, "Novela con Brain")
+	if err != nil {
+		t.Fatalf("failed to create novel: %v", err)
+	}
+
+	// Add facts to .novel/brain.db
+	brainDbPath := filepath.Join(novelMeta.AbsolutePath, ".novel", "brain.db")
+	brainRepo, err := repository.NewSQLiteBrainRepository(brainDbPath)
+	if err != nil {
+		t.Fatalf("failed to open brain db: %v", err)
+	}
+	_ = brainRepo.SaveFact(context.Background(), domain.BrainFact{
+		ID:      "bf-1",
+		Topic:   "Lore",
+		Concept: "Torre Oscura",
+		Fact:    "Una torre de piedra negra en el horizonte",
+		Type:    domain.FactTypeLore,
+	})
+	_ = brainRepo.Close()
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateLauncher, tempDir)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+
+	// Open novel
+	m, openCmd := m.Update(messages.OpenNovelMsg{Path: novelMeta.AbsolutePath})
+	if openCmd != nil {
+		msg := openCmd()
+		if msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+
+	// Switch sidebar tab to TabBrain (tab 3)
+	m, _ = m.Update(messages.SelectSidebarTabMsg{Tab: 3})
+	// Trigger brain activity to reload
+	m, actCmd := m.Update(messages.BrainActivityMsg{
+		Event: domain.BrainActivityEvent{
+			Type:        "saved",
+			FactCount:   1,
+			Description: "🧠 [Brain] Memorizado",
+		},
+	})
+	if actCmd != nil {
+		msg := actCmd()
+		if msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+
+	view := m.View()
+	if !strings.Contains(view, "Torre Oscura") {
+		t.Errorf("expected Torre Oscura fact to be visible in editor view sidebar: %s", view)
 	}
 }
