@@ -1094,3 +1094,99 @@ func TestCommandPaletteComponent(t *testing.T) {
 
 
 
+
+func TestSidebarAccordionExclusive(t *testing.T) {
+	tempDir := t.TempDir()
+	chapRepo, _ := repository.NewFileChapterRepository(tempDir)
+	charRepo := repository.NewFileCharacterRepository(tempDir)
+
+	styles := theme.DefaultStyles
+	sidebar := components.NewSidebarModel(chapRepo, charRepo, styles)
+	sidebar.SetSize(40, 20)
+
+	// 1. Collapsed by default: all 4 headers visible, no body rendered.
+	view := sidebar.View()
+	for _, h := range []string{"1: Capítulos", "2: Personajes", "3: Notas", "4: Brain"} {
+		if !strings.Contains(view, h) {
+			t.Errorf("expected collapsed view to contain header %q: %s", h, view)
+		}
+	}
+	if strings.Contains(view, "No hay capítulos") {
+		t.Errorf("expected no expanded body when collapsed: %s", view)
+	}
+
+	sidebar, _ = sidebar.Update(messages.FocusMsg{Target: messages.FocusSidebar})
+
+	// 2. Key '1' expands Chapters exclusively.
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+	if sidebar.ActiveTab != components.TabChapters {
+		t.Errorf("expected TabChapters after '1', got %v", sidebar.ActiveTab)
+	}
+	if !strings.Contains(sidebar.View(), "No hay capítulos") {
+		t.Errorf("expected expanded chapters body after '1': %s", sidebar.View())
+	}
+
+	// 3. Key '2' opens Characters and closes Chapters (exclusive).
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	if sidebar.ActiveTab != components.TabCharacters {
+		t.Errorf("expected TabCharacters after '2', got %v", sidebar.ActiveTab)
+	}
+	if strings.Contains(sidebar.View(), "No hay capítulos") {
+		t.Errorf("expected chapters body closed after opening characters: %s", sidebar.View())
+	}
+
+	// 4. SelectSidebarTabMsg expands Brain (e.g. from navbar pills).
+	sidebar, _ = sidebar.Update(messages.SelectSidebarTabMsg{Tab: 3})
+	if sidebar.ActiveTab != components.TabBrain {
+		t.Errorf("expected TabBrain after SelectSidebarTabMsg(3), got %v", sidebar.ActiveTab)
+	}
+	if !strings.Contains(sidebar.View(), "Memoria Brain") {
+		t.Errorf("expected brain body visible after SelectSidebarTabMsg(3): %s", sidebar.View())
+	}
+
+	// 5. Clicking the open Brain header (row 4: headers 1-4, body from 5)
+	// collapses every section.
+	sidebar, _ = sidebar.Update(tea.MouseMsg{X: 5, Y: 4, Type: tea.MouseLeft})
+	if strings.Contains(sidebar.View(), "Memoria Brain") {
+		t.Errorf("expected collapse after clicking open section header: %s", sidebar.View())
+	}
+
+	// 6. Clicking the Characters header (row 2 when collapsed) opens it.
+	sidebar, _ = sidebar.Update(tea.MouseMsg{X: 5, Y: 2, Type: tea.MouseLeft})
+	if sidebar.ActiveTab != components.TabCharacters {
+		t.Errorf("expected TabCharacters after clicking its header, got %v", sidebar.ActiveTab)
+	}
+	if !strings.Contains(sidebar.View(), "No hay personajes") {
+		t.Errorf("expected characters body after clicking its header: %s", sidebar.View())
+	}
+}
+
+func TestSidebarAccordionMouseBodySelect(t *testing.T) {
+	tempDir := t.TempDir()
+	chapRepo, _ := repository.NewFileChapterRepository(tempDir)
+	charRepo := repository.NewFileCharacterRepository(tempDir)
+
+	styles := theme.DefaultStyles
+	sidebar := components.NewSidebarModel(chapRepo, charRepo, styles)
+	sidebar.SetSize(40, 20)
+	sidebar.Chapters = []domain.Chapter{
+		{ID: "c1", Title: "Cap Uno", WordCount: 10},
+		{ID: "c2", Title: "Cap Dos", WordCount: 20},
+	}
+	sidebar, _ = sidebar.Update(messages.FocusMsg{Target: messages.FocusSidebar})
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+
+	// Body starts at row 2 (border 0, header 1); each chapter takes 2 rows,
+	// so row 4 is the title of the second chapter.
+	sidebar, cmd := sidebar.Update(tea.MouseMsg{X: 5, Y: 4, Type: tea.MouseLeft})
+	if sidebar.SelectedChapter != 1 {
+		t.Errorf("expected second chapter selected on body click, got %d", sidebar.SelectedChapter)
+	}
+	if cmd == nil {
+		t.Fatalf("expected ChapterSelectedMsg command on chapter body click")
+	}
+	selMsg, ok := cmd().(messages.ChapterSelectedMsg)
+	if !ok || selMsg.Chapter.ID != "c2" {
+		t.Errorf("expected ChapterSelectedMsg for c2, got: %+v", cmd())
+	}
+}

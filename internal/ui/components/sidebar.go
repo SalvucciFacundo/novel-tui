@@ -83,7 +83,12 @@ func DefaultSidebarKeyMap() SidebarKeyMap {
 	}
 }
 
-// SidebarModel manages the left sidebar panel state, 4-tab navigation, and notes editing.
+// SidebarModel manages the left sidebar panel state, accordion navigation, and notes editing.
+//
+// The sidebar renders 4 stacked sections (Chapters, Characters, Notes, Brain)
+// as an exclusive accordion: at most one section is expanded at a time.
+// ActiveTab tracks which section is expanded (or was last expanded),
+// while Collapsed reports whether every section is currently closed.
 type SidebarModel struct {
 	chapterRepo   domain.ChapterRepository
 	characterRepo domain.CharacterRepository
@@ -91,6 +96,7 @@ type SidebarModel struct {
 	novelPath     string
 
 	ActiveTab             SidebarTab
+	Collapsed             bool
 	BrainSubView          BrainSubView
 	Chapters              []domain.Chapter
 	Characters            []domain.Character
@@ -127,10 +133,29 @@ func NewSidebarModel(
 		chapterRepo:   chapterRepo,
 		characterRepo: characterRepo,
 		ActiveTab:     TabChapters,
+		Collapsed:     true,
 		notesTextarea: ta,
 		styles:        styles,
 		keys:          DefaultSidebarKeyMap(),
 	}
+}
+
+// expandTab opens the given section exclusively, closing every other section.
+// It returns the focus command needed when the Notes editor gains or loses focus.
+func (m *SidebarModel) expandTab(tab SidebarTab) tea.Cmd {
+	m.ActiveTab = tab
+	m.Collapsed = false
+	if m.ActiveTab == TabNotes && m.Focused {
+		return m.notesTextarea.Focus()
+	}
+	m.notesTextarea.Blur()
+	return nil
+}
+
+// collapseAll closes every accordion section, leaving the sidebar headers only.
+func (m *SidebarModel) collapseAll() {
+	m.Collapsed = true
+	m.notesTextarea.Blur()
 }
 
 // Init loads initial chapters, characters, and facts.
@@ -273,7 +298,7 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 
 	case messages.FocusMsg:
 		m.Focused = (msg.Target == messages.FocusSidebar)
-		if m.Focused && m.ActiveTab == TabNotes {
+		if m.Focused && !m.Collapsed && m.ActiveTab == TabNotes {
 			cmds = append(cmds, m.notesTextarea.Focus())
 		} else {
 			m.notesTextarea.Blur()
@@ -282,11 +307,8 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 	case messages.SelectSidebarTabMsg:
 		tab := SidebarTab(msg.Tab)
 		if tab >= TabChapters && tab <= TabBrain {
-			m.ActiveTab = tab
-			if m.ActiveTab == TabNotes && m.Focused {
-				cmds = append(cmds, m.notesTextarea.Focus())
-			} else {
-				m.notesTextarea.Blur()
+			if cmd := m.expandTab(tab); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
 		}
 
@@ -296,6 +318,9 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 	case tea.MouseMsg:
 		switch msg.Type {
 		case tea.MouseWheelUp:
+			if m.Collapsed {
+				return m, nil
+			}
 			if m.ActiveTab == TabChapters {
 				if m.SelectedChapter > 0 {
 					m.SelectedChapter--
@@ -320,6 +345,9 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 			return m, nil
 
 		case tea.MouseWheelDown:
+			if m.Collapsed {
+				return m, nil
+			}
 			if m.ActiveTab == TabChapters {
 				if m.SelectedChapter < len(m.Chapters)-1 {
 					m.SelectedChapter++
@@ -345,31 +373,28 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 
 		case tea.MouseLeft:
 			m.Focused = true
-			if msg.Y <= 2 {
-				// Header tabs click detection across 4 tabs
-				quarter := m.Width / 4
-				if quarter <= 0 {
-					quarter = 7
+			// Accordion hit-testing is row-based: every section header spans the
+			// full sidebar width, so clicks never depend on X quarters. Local Y
+			// 0 is the panel top border; headers and body rows follow it.
+			headerY, bodyStart, bodyEnd := m.accordionRows()
+			tabs := []SidebarTab{TabChapters, TabCharacters, TabNotes, TabBrain}
+			for i, tab := range tabs {
+				if msg.Y == headerY[i] {
+					// Clicking the open section collapses it; clicking any
+					// other header opens it exclusively.
+					if !m.Collapsed && m.ActiveTab == tab {
+						m.collapseAll()
+					} else if cmd := m.expandTab(tab); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					return m, tea.Batch(cmds...)
 				}
-				if msg.X < quarter {
-					m.ActiveTab = TabChapters
-					m.notesTextarea.Blur()
-				} else if msg.X < quarter*2 {
-					m.ActiveTab = TabCharacters
-					m.notesTextarea.Blur()
-				} else if msg.X < quarter*3 {
-					m.ActiveTab = TabNotes
-					cmds = append(cmds, m.notesTextarea.Focus())
-				} else {
-					m.ActiveTab = TabBrain
-					m.notesTextarea.Blur()
-				}
-				return m, tea.Batch(cmds...)
 			}
 
-			if msg.Y >= 3 {
+			if !m.Collapsed && msg.Y >= bodyStart && msg.Y <= bodyEnd {
+				relY := msg.Y - bodyStart
 				if m.ActiveTab == TabChapters {
-					chapIdx := (msg.Y - 3) / 2
+					chapIdx := relY / 2
 					if chapIdx >= 0 && chapIdx < len(m.Chapters) {
 						m.SelectedChapter = chapIdx
 						selected := m.Chapters[chapIdx]
@@ -378,23 +403,27 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 						}
 					}
 				} else if m.ActiveTab == TabCharacters {
-					charIdx := msg.Y - 3
+					// The character list uses one row per entry; rows below
+					// the list belong to the detail card and select nothing.
+					charIdx := relY
 					if charIdx >= 0 && charIdx < len(m.Characters) {
 						m.SelectedChar = charIdx
 						return m, nil
 					}
 				} else if m.ActiveTab == TabBrain {
 					if m.BrainSubView == BrainSubViewTimeline {
-						eventIdx := (msg.Y - 4) / 2
-						if eventIdx >= 0 && eventIdx < len(m.TimelineEvents) {
-							m.SelectedTimelineEvent = eventIdx
+						if idx, ok := m.timelineEventAtRow(relY); ok {
+							m.SelectedTimelineEvent = idx
 							return m, nil
 						}
 					} else {
-						factIdx := (msg.Y - 4) / 2
-						if factIdx >= 0 && factIdx < len(m.BrainFacts) {
-							m.SelectedBrainFact = factIdx
-							return m, nil
+						// Row 0 is the body header; each fact takes 2 rows.
+						if relY >= 1 {
+							factIdx := (relY - 1) / 2
+							if factIdx >= 0 && factIdx < len(m.BrainFacts) {
+								m.SelectedBrainFact = factIdx
+								return m, nil
+							}
 						}
 					}
 				} else if m.ActiveTab == TabNotes {
@@ -412,21 +441,23 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 			return m, nil
 		}
 
-		if m.ActiveTab == TabNotes {
+		if !m.Collapsed && m.ActiveTab == TabNotes {
 			if key.Matches(msg, m.keys.Save) {
 				_ = m.SaveNotes()
 				return m, nil
 			}
-			// Allow tab cycling shortcuts even in notes
+			// Allow section cycling shortcuts even in notes
 			if key.Matches(msg, m.keys.PrevTab) && msg.String() == "[" {
-				m.ActiveTab = TabCharacters
-				m.notesTextarea.Blur()
-				return m, nil
+				if cmd := m.expandTab(TabCharacters); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				return m, tea.Batch(cmds...)
 			}
 			if key.Matches(msg, m.keys.NextTab) && msg.String() == "]" {
-				m.ActiveTab = TabBrain
-				m.notesTextarea.Blur()
-				return m, nil
+				if cmd := m.expandTab(TabBrain); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				return m, tea.Batch(cmds...)
 			}
 
 			var taCmd tea.Cmd
@@ -435,44 +466,67 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 			return m, tea.Batch(cmds...)
 		}
 
-		// In TabChapters, TabCharacters, or TabBrain:
+		// Accordion sections: number keys and cycling expand one section
+		// exclusively, closing the others.
 		switch {
 		case msg.String() == "1":
-			m.ActiveTab = TabChapters
+			if cmd := m.expandTab(TabChapters); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		case msg.String() == "2":
-			m.ActiveTab = TabCharacters
+			if cmd := m.expandTab(TabCharacters); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		case msg.String() == "3":
-			m.ActiveTab = TabNotes
-			cmds = append(cmds, m.notesTextarea.Focus())
+			if cmd := m.expandTab(TabNotes); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		case msg.String() == "4":
-			m.ActiveTab = TabBrain
+			if cmd := m.expandTab(TabBrain); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		case key.Matches(msg, m.keys.PrevTab):
 			switch m.ActiveTab {
 			case TabChapters:
-				m.ActiveTab = TabBrain
+				if cmd := m.expandTab(TabBrain); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			case TabCharacters:
-				m.ActiveTab = TabChapters
+				if cmd := m.expandTab(TabChapters); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			case TabNotes:
-				m.ActiveTab = TabCharacters
-				m.notesTextarea.Blur()
+				if cmd := m.expandTab(TabCharacters); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			case TabBrain:
-				m.ActiveTab = TabNotes
-				cmds = append(cmds, m.notesTextarea.Focus())
+				if cmd := m.expandTab(TabNotes); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 		case key.Matches(msg, m.keys.NextTab):
 			switch m.ActiveTab {
 			case TabChapters:
-				m.ActiveTab = TabCharacters
+				if cmd := m.expandTab(TabCharacters); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			case TabCharacters:
-				m.ActiveTab = TabNotes
-				cmds = append(cmds, m.notesTextarea.Focus())
+				if cmd := m.expandTab(TabNotes); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			case TabNotes:
-				m.ActiveTab = TabBrain
-				m.notesTextarea.Blur()
+				if cmd := m.expandTab(TabBrain); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			case TabBrain:
-				m.ActiveTab = TabChapters
+				if cmd := m.expandTab(TabChapters); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
 			}
 		case key.Matches(msg, m.keys.Up):
+			if m.Collapsed {
+				break
+			}
 			switch m.ActiveTab {
 			case TabChapters:
 				if m.SelectedChapter > 0 {
@@ -494,6 +548,9 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 				}
 			}
 		case key.Matches(msg, m.keys.Down):
+			if m.Collapsed {
+				break
+			}
 			switch m.ActiveTab {
 			case TabChapters:
 				if m.SelectedChapter < len(m.Chapters)-1 {
@@ -514,14 +571,14 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 					}
 				}
 			}
-		case m.ActiveTab == TabBrain && msg.String() == "t":
+		case !m.Collapsed && m.ActiveTab == TabBrain && msg.String() == "t":
 			if m.BrainSubView == BrainSubViewFacts {
 				m.BrainSubView = BrainSubViewTimeline
 			} else {
 				m.BrainSubView = BrainSubViewFacts
 			}
 			return m, nil
-		case m.ActiveTab == TabBrain && (msg.String() == "d" || msg.String() == "x"):
+		case !m.Collapsed && m.ActiveTab == TabBrain && (msg.String() == "d" || msg.String() == "x"):
 			if m.brainRepo != nil {
 				repo := m.brainRepo
 				if m.BrainSubView == BrainSubViewTimeline && len(m.TimelineEvents) > 0 && m.SelectedTimelineEvent < len(m.TimelineEvents) {
@@ -543,14 +600,19 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 				}
 			}
 		case key.Matches(msg, m.keys.Select):
-			if m.ActiveTab == TabChapters && len(m.Chapters) > 0 && m.SelectedChapter < len(m.Chapters) {
+			if m.Collapsed {
+				// Enter on a collapsed sidebar reopens the last section.
+				if cmd := m.expandTab(m.ActiveTab); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+			} else if m.ActiveTab == TabChapters && len(m.Chapters) > 0 && m.SelectedChapter < len(m.Chapters) {
 				selected := m.Chapters[m.SelectedChapter]
 				return m, func() tea.Msg {
 					return messages.ChapterSelectedMsg{Chapter: selected}
 				}
 			}
 		case key.Matches(msg, m.keys.New):
-			if m.ActiveTab == TabChapters {
+			if !m.Collapsed && m.ActiveTab == TabChapters {
 				return m, func() tea.Msg {
 					return messages.ShowModalMsg{
 						Purpose: messages.ModalPurposeNewChapter,
@@ -591,55 +653,119 @@ func (m *SidebarModel) SetSize(w, h int) {
 	m.notesTextarea.SetHeight(innerH)
 }
 
-// View renders the 4-tab sidebar panel.
+// accordionRows maps local mouse Y coordinates to accordion header rows and the
+// expanded body region. Local Y 0 is the panel top border; the first section
+// header always sits at row 1. Body heights are measured with lipgloss.Height
+// so wrapped card text stays aligned with the rendered view. When every
+// section is collapsed, bodyStart and bodyEnd are -1.
+func (m SidebarModel) accordionRows() (headerY [4]int, bodyStart, bodyEnd int) {
+	contentWidth := m.Width - 2 // account for borders
+	if contentWidth < 0 {
+		contentWidth = 0
+	}
+	bodyStart, bodyEnd = -1, -1
+	tabs := []SidebarTab{TabChapters, TabCharacters, TabNotes, TabBrain}
+	y := 1
+	for i, tab := range tabs {
+		headerY[i] = y
+		y++
+		if !m.Collapsed && m.ActiveTab == tab {
+			var body string
+			switch tab {
+			case TabChapters:
+				body = m.renderChaptersList(contentWidth)
+			case TabCharacters:
+				body = m.renderLoreView(contentWidth)
+			case TabNotes:
+				body = m.renderNotesView(contentWidth)
+			case TabBrain:
+				body = m.renderBrainTab(contentWidth)
+			}
+			h := lipgloss.Height(body)
+			if h < 1 {
+				h = 1
+			}
+			bodyStart = y
+			bodyEnd = y + h - 1
+			y = bodyEnd + 1
+		}
+	}
+	return headerY, bodyStart, bodyEnd
+}
+
+// timelineEventAtRow resolves a body-relative row (0 = first body line) to a
+// timeline event index, accounting for the body header line and the period
+// group headers interleaved between events. Each event occupies 2 rows
+// (title + description snippet).
+func (m SidebarModel) timelineEventAtRow(relY int) (int, bool) {
+	row := 1 // body header line
+	currentPeriod := ""
+	for i := range m.TimelineEvents {
+		ev := m.TimelineEvents[i]
+		if ev.Period != "" && ev.Period != currentPeriod {
+			currentPeriod = ev.Period
+			row++
+		}
+		if relY == row || relY == row+1 {
+			return i, true
+		}
+		row += 2
+	}
+	return 0, false
+}
+
+// sectionHeader renders one full-width accordion header row with its
+// expand/collapse indicator, shortcut number, title, and item count.
+func (m SidebarModel) sectionHeader(tab SidebarTab, shortcut, title string, count int, width int) string {
+	indicator := "▶"
+	style := m.styles.TabInactive
+	if !m.Collapsed && m.ActiveTab == tab {
+		indicator = "▼"
+		style = m.styles.TabActive
+	}
+	label := fmt.Sprintf("%s %s: %s", indicator, shortcut, title)
+	if count >= 0 {
+		label = fmt.Sprintf("%s (%d)", label, count)
+	}
+	return style.Width(width).Render(label)
+}
+
+// View renders the accordion sidebar panel with 4 stacked collapsible sections.
 func (m SidebarModel) View() string {
 	contentWidth := m.Width - 2 // account for borders
 	if contentWidth < 0 {
 		contentWidth = 0
 	}
 
-	// 1. Header with 4 Tabs
-	var tab1, tab2, tab3, tab4 string
-	if m.ActiveTab == TabChapters {
-		tab1 = m.styles.TabActive.Render("1: Capítulos")
-		tab2 = m.styles.TabInactive.Render("2: Personajes")
-		tab3 = m.styles.TabInactive.Render("3: Notas")
-		tab4 = m.styles.TabInactive.Render("4: Brain")
-	} else if m.ActiveTab == TabCharacters {
-		tab1 = m.styles.TabInactive.Render("1: Capítulos")
-		tab2 = m.styles.TabActive.Render("2: Personajes")
-		tab3 = m.styles.TabInactive.Render("3: Notas")
-		tab4 = m.styles.TabInactive.Render("4: Brain")
-	} else if m.ActiveTab == TabNotes {
-		tab1 = m.styles.TabInactive.Render("1: Capítulos")
-		tab2 = m.styles.TabInactive.Render("2: Personajes")
-		tab3 = m.styles.TabActive.Render("3: Notas")
-		tab4 = m.styles.TabInactive.Render("4: Brain")
-	} else {
-		tab1 = m.styles.TabInactive.Render("1: Capítulos")
-		tab2 = m.styles.TabInactive.Render("2: Personajes")
-		tab3 = m.styles.TabInactive.Render("3: Notas")
-		tab4 = m.styles.TabActive.Render("4: Brain")
+	// Stacked accordion sections; only the expanded one renders its body.
+	blocks := []string{
+		m.sectionHeader(TabChapters, "1", "Capítulos", len(m.Chapters), contentWidth),
+	}
+	if !m.Collapsed && m.ActiveTab == TabChapters {
+		blocks = append(blocks, m.renderChaptersList(contentWidth))
+	}
+	blocks = append(blocks,
+		m.sectionHeader(TabCharacters, "2", "Personajes", len(m.Characters), contentWidth),
+	)
+	if !m.Collapsed && m.ActiveTab == TabCharacters {
+		blocks = append(blocks, m.renderLoreView(contentWidth))
+	}
+	blocks = append(blocks,
+		m.sectionHeader(TabNotes, "3", "Notas", -1, contentWidth),
+	)
+	if !m.Collapsed && m.ActiveTab == TabNotes {
+		blocks = append(blocks, m.renderNotesView(contentWidth))
+	}
+	brainCount := len(m.BrainFacts) + len(m.TimelineEvents)
+	blocks = append(blocks,
+		m.sectionHeader(TabBrain, "4", "Brain", brainCount, contentWidth),
+	)
+	if !m.Collapsed && m.ActiveTab == TabBrain {
+		blocks = append(blocks, m.renderBrainTab(contentWidth))
 	}
 
-	header := lipgloss.JoinHorizontal(lipgloss.Top, tab1, " ", tab2, " ", tab3, " ", tab4)
-	header = m.styles.SidebarHeader.Width(contentWidth).Render(header)
-
-	// 2. Tab Content
-	var body string
-	switch m.ActiveTab {
-	case TabChapters:
-		body = m.renderChaptersList(contentWidth)
-	case TabCharacters:
-		body = m.renderLoreView(contentWidth)
-	case TabNotes:
-		body = m.renderNotesView(contentWidth)
-	case TabBrain:
-		body = m.renderBrainTab(contentWidth)
-	}
-
-	// Combine header and body
-	fullContent := lipgloss.JoinVertical(lipgloss.Left, header, body)
+	// Combine stacked headers and the single expanded body
+	fullContent := lipgloss.JoinVertical(lipgloss.Left, blocks...)
 
 	// Apply panel style based on focus
 	panelStyle := m.styles.BlurredPanel
