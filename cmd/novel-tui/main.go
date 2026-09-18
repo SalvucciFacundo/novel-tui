@@ -28,6 +28,12 @@ func main() {
 		return
 	}
 
+	// Bare `version` alias for `--version`.
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Printf("novel-tui %s\n", effectiveVersion())
+		return
+	}
+
 	var workspaceDir string
 	var showVersion bool
 	flag.StringVar(&workspaceDir, "dir", "", "Directory path for novel workspace")
@@ -42,6 +48,17 @@ func main() {
 	// Also support positional directory argument (e.g. novel-tui ~/Novelas/MiNovela)
 	if workspaceDir == "" && flag.NArg() > 0 {
 		workspaceDir = flag.Arg(0)
+	}
+
+	// A positional argument must be an existing directory. Otherwise a typo
+	// (e.g. `novel-tui versoin`) would silently open the editor pointed at a
+	// garbage path instead of failing fast.
+	if workspaceDir != "" {
+		if info, err := os.Stat(repository.ExpandHome(workspaceDir)); err != nil || !info.IsDir() {
+			fmt.Printf("Directorio inválido: %s\n\n", workspaceDir)
+			flag.Usage()
+			os.Exit(2)
+		}
 	}
 
 	configRepo := repository.NewFileConfigRepository("")
