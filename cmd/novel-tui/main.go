@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime/debug"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -34,7 +35,7 @@ func main() {
 	flag.Parse()
 
 	if showVersion {
-		fmt.Printf("novel-tui %s\n", version)
+		fmt.Printf("novel-tui %s\n", effectiveVersion())
 		return
 	}
 
@@ -60,6 +61,19 @@ func main() {
 	}
 }
 
+// effectiveVersion reports the release version when available. Binaries built
+// with GoReleaser carry it via ldflags; binaries from `go install @vX` expose
+// it through the module build info; local builds report "dev".
+func effectiveVersion() string {
+	if version != "" && version != "dev" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return "dev"
+}
+
 // runUpgrade reinstalls the latest published novel-tui over the current
 // binary using the Go toolchain (the documented install method).
 func runUpgrade() error {
@@ -67,7 +81,7 @@ func runUpgrade() error {
 	if err != nil {
 		return fmt.Errorf("se necesita el toolchain de Go instalado para actualizar (go install)")
 	}
-	fmt.Printf("Actualizando novel-tui (versión actual: %s)...\n", version)
+	fmt.Printf("Actualizando novel-tui (versión actual: %s)...\n", effectiveVersion())
 	cmd := exec.Command(goBin, "install", "github.com/SalvucciFacundo/novel-tui/cmd/novel-tui@latest")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
