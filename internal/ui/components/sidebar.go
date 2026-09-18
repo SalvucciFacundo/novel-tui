@@ -372,73 +372,46 @@ func (m SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 			return m, nil
 
 		case tea.MouseLeft:
+			// Clicks only focus the sidebar. Section toggling and item
+			// selection are keyboard-driven (numbers, Alt+numbers, j/k,
+			// enter): fine-grained hit-testing breaks across terminal
+			// sizes, emoji widths, and wrapped card rows.
 			m.Focused = true
-			// Accordion hit-testing is row-based: every section header spans the
-			// full sidebar width, so clicks never depend on X quarters. Local Y
-			// 0 is the panel top border; headers and body rows follow it.
-			headerY, bodyStart, bodyEnd := m.accordionRows()
-			tabs := []SidebarTab{TabChapters, TabCharacters, TabNotes, TabBrain}
-			for i, tab := range tabs {
-				if msg.Y == headerY[i] {
-					// Clicking the open section collapses it; clicking any
-					// other header opens it exclusively.
-					if !m.Collapsed && m.ActiveTab == tab {
-						m.collapseAll()
-					} else if cmd := m.expandTab(tab); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
-					return m, tea.Batch(cmds...)
-				}
-			}
-
-			if !m.Collapsed && msg.Y >= bodyStart && msg.Y <= bodyEnd {
-				relY := msg.Y - bodyStart
-				if m.ActiveTab == TabChapters {
-					chapIdx := relY / 2
-					if chapIdx >= 0 && chapIdx < len(m.Chapters) {
-						m.SelectedChapter = chapIdx
-						selected := m.Chapters[chapIdx]
-						return m, func() tea.Msg {
-							return messages.ChapterSelectedMsg{Chapter: selected}
-						}
-					}
-				} else if m.ActiveTab == TabCharacters {
-					// The character list uses one row per entry; rows below
-					// the list belong to the detail card and select nothing.
-					charIdx := relY
-					if charIdx >= 0 && charIdx < len(m.Characters) {
-						m.SelectedChar = charIdx
-						return m, nil
-					}
-				} else if m.ActiveTab == TabBrain {
-					if m.BrainSubView == BrainSubViewTimeline {
-						if idx, ok := m.timelineEventAtRow(relY); ok {
-							m.SelectedTimelineEvent = idx
-							return m, nil
-						}
-					} else {
-						// Row 0 is the body header; each fact takes 2 rows.
-						if relY >= 1 {
-							factIdx := (relY - 1) / 2
-							if factIdx >= 0 && factIdx < len(m.BrainFacts) {
-								m.SelectedBrainFact = factIdx
-								return m, nil
-							}
-						}
-					}
-				} else if m.ActiveTab == TabNotes {
-					var taCmd tea.Cmd
-					m.notesTextarea, taCmd = m.notesTextarea.Update(msg)
-					cmds = append(cmds, taCmd)
-					return m, tea.Batch(cmds...)
-				}
-			}
 			return m, nil
 		}
 
 	case tea.KeyMsg:
 		if !m.Focused {
 			return m, nil
+		}
+
+		// Alt+number expands a section exclusively from anywhere in the
+		// sidebar — including while typing in Notes, where plain digits must
+		// keep going to the text buffer. (Ctrl+digits are unusable: the
+		// terminal sends the same bytes as Ctrl+Q/NUL/ESC/Ctrl+\.)
+		if msg.Alt && len(msg.Runes) == 1 {
+			switch msg.Runes[0] {
+			case '1':
+				if cmd := m.expandTab(TabChapters); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				return m, tea.Batch(cmds...)
+			case '2':
+				if cmd := m.expandTab(TabCharacters); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				return m, tea.Batch(cmds...)
+			case '3':
+				if cmd := m.expandTab(TabNotes); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				return m, tea.Batch(cmds...)
+			case '4':
+				if cmd := m.expandTab(TabBrain); cmd != nil {
+					cmds = append(cmds, cmd)
+				}
+				return m, tea.Batch(cmds...)
+			}
 		}
 
 		if !m.Collapsed && m.ActiveTab == TabNotes {
@@ -651,67 +624,6 @@ func (m *SidebarModel) SetSize(w, h int) {
 	}
 	m.notesTextarea.SetWidth(innerW)
 	m.notesTextarea.SetHeight(innerH)
-}
-
-// accordionRows maps local mouse Y coordinates to accordion header rows and the
-// expanded body region. Local Y 0 is the panel top border; the first section
-// header always sits at row 1. Body heights are measured with lipgloss.Height
-// so wrapped card text stays aligned with the rendered view. When every
-// section is collapsed, bodyStart and bodyEnd are -1.
-func (m SidebarModel) accordionRows() (headerY [4]int, bodyStart, bodyEnd int) {
-	contentWidth := m.Width - 2 // account for borders
-	if contentWidth < 0 {
-		contentWidth = 0
-	}
-	bodyStart, bodyEnd = -1, -1
-	tabs := []SidebarTab{TabChapters, TabCharacters, TabNotes, TabBrain}
-	y := 1
-	for i, tab := range tabs {
-		headerY[i] = y
-		y++
-		if !m.Collapsed && m.ActiveTab == tab {
-			var body string
-			switch tab {
-			case TabChapters:
-				body = m.renderChaptersList(contentWidth)
-			case TabCharacters:
-				body = m.renderLoreView(contentWidth)
-			case TabNotes:
-				body = m.renderNotesView(contentWidth)
-			case TabBrain:
-				body = m.renderBrainTab(contentWidth)
-			}
-			h := lipgloss.Height(body)
-			if h < 1 {
-				h = 1
-			}
-			bodyStart = y
-			bodyEnd = y + h - 1
-			y = bodyEnd + 1
-		}
-	}
-	return headerY, bodyStart, bodyEnd
-}
-
-// timelineEventAtRow resolves a body-relative row (0 = first body line) to a
-// timeline event index, accounting for the body header line and the period
-// group headers interleaved between events. Each event occupies 2 rows
-// (title + description snippet).
-func (m SidebarModel) timelineEventAtRow(relY int) (int, bool) {
-	row := 1 // body header line
-	currentPeriod := ""
-	for i := range m.TimelineEvents {
-		ev := m.TimelineEvents[i]
-		if ev.Period != "" && ev.Period != currentPeriod {
-			currentPeriod = ev.Period
-			row++
-		}
-		if relY == row || relY == row+1 {
-			return i, true
-		}
-		row += 2
-	}
-	return 0, false
 }
 
 // sectionHeader renders one full-width accordion header row with its

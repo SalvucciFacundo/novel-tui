@@ -205,7 +205,8 @@ func TestRootModel_MouseRouting(t *testing.T) {
 		t.Errorf("expected LLM config view after mouse click, got: %s", view)
 	}
 
-	// 2. Switch to Editor view and test Navbar click routing (Y == 0)
+	// 2. Switch to Editor view: navbar pills are visual-only, so clicking
+	// Inicio must NOT leave the editor (navigation is keyboard-driven).
 	m, _ = m.Update(messages.ChangeViewMsg{View: messages.ViewStateEditor})
 	// Click Inicio pill at Y = 0, X = 5
 	m, cmd = m.Update(tea.MouseMsg{
@@ -214,14 +215,16 @@ func TestRootModel_MouseRouting(t *testing.T) {
 		Type: tea.MouseLeft,
 	})
 	if cmd != nil {
-		msg := cmd()
-		if viewMsg, ok := msg.(messages.ChangeViewMsg); ok {
-			m, _ = m.Update(viewMsg)
+		if msg := cmd(); msg != nil {
+			t.Errorf("expected no command on navbar click, got: %+v", msg)
 		}
 	}
 	view = m.View()
-	if !strings.Contains(view, "Acciones Rápidas") {
-		t.Errorf("expected Launcher view after clicking Inicio pill in Navbar, got: %s", view)
+	if strings.Contains(view, "Acciones Rápidas") {
+		t.Errorf("expected Editor view to persist after clicking navbar pill, got launcher")
+	}
+	if !strings.Contains(view, "Capítulos") {
+		t.Errorf("expected sidebar accordion in editor view, got: %s", view)
 	}
 }
 

@@ -47,79 +47,19 @@ func TestNavbarComponent(t *testing.T) {
 		t.Errorf("expected fallback chapter text in navbar: %s", viewEmpty)
 	}
 
-	// Test mouse click hit-testing
-	// 1. Click Inicio pill (at X = 5)
-	_, cmd := nav.Update(tea.MouseMsg{
-		X:    5,
-		Y:    0,
-		Type: tea.MouseLeft,
-	})
-	if cmd == nil {
-		t.Fatalf("expected command on clicking Inicio pill")
-	}
-	msg := cmd()
-	viewMsg, ok := msg.(messages.ChangeViewMsg)
-	if !ok || viewMsg.View != messages.ViewStateLauncher {
-		t.Errorf("expected ChangeViewMsg(Launcher), got: %+v", msg)
-	}
-
-	// 2. Click AI Assistant pill (at X = 125)
-	_, cmd = nav.Update(tea.MouseMsg{
-		X:    125,
-		Y:    0,
-		Type: tea.MouseLeft,
-	})
-	if cmd == nil {
-		t.Fatalf("expected command on clicking AI pill")
-	}
-	msg = cmd()
-	if _, ok := msg.(messages.ToggleChatDrawerMsg); !ok {
-		t.Errorf("expected ToggleChatDrawerMsg, got: %+v", msg)
-	}
-
-	// 3. Click Tab 1: Capítulos (at X = 70)
-	_, cmd = nav.Update(tea.MouseMsg{
-		X:    70,
-		Y:    0,
-		Type: tea.MouseLeft,
-	})
-	if cmd == nil {
-		t.Fatalf("expected command on clicking Tab 1 pill")
-	}
-	msg = cmd()
-	tabMsg, ok := msg.(messages.SelectSidebarTabMsg)
-	if !ok || tabMsg.Tab != 0 {
-		t.Errorf("expected SelectSidebarTabMsg(0), got: %+v", msg)
-	}
-
-	// 4. Click Tab 2: Personajes (at X = 90)
-	_, cmd = nav.Update(tea.MouseMsg{
-		X:    90,
-		Y:    0,
-		Type: tea.MouseLeft,
-	})
-	if cmd == nil {
-		t.Fatalf("expected command on clicking Tab 2 pill")
-	}
-	msg = cmd()
-	tabMsg, ok = msg.(messages.SelectSidebarTabMsg)
-	if !ok || tabMsg.Tab != 1 {
-		t.Errorf("expected SelectSidebarTabMsg(1), got: %+v", msg)
-	}
-
-	// 5. Click Tab 3: Notas (at X = 105)
-	_, cmd = nav.Update(tea.MouseMsg{
-		X:    105,
-		Y:    0,
-		Type: tea.MouseLeft,
-	})
-	if cmd == nil {
-		t.Fatalf("expected command on clicking Tab 3 pill")
-	}
-	msg = cmd()
-	tabMsg, ok = msg.(messages.SelectSidebarTabMsg)
-	if !ok || tabMsg.Tab != 2 {
-		t.Errorf("expected SelectSidebarTabMsg(2), got: %+v", msg)
+	// Navbar pills are a visual legend only: mouse clicks must be inert and
+	// emit no commands (navigation is keyboard-driven: Ctrl+H, Alt+1..4).
+	for _, x := range []int{5, 70, 90, 105, 125} {
+		_, cmd := nav.Update(tea.MouseMsg{
+			X:    x,
+			Y:    0,
+			Type: tea.MouseLeft,
+		})
+		if cmd != nil {
+			if msg := cmd(); msg != nil {
+				t.Errorf("expected no command on navbar click at X=%d, got: %+v", x, msg)
+			}
+		}
 	}
 }
 
@@ -443,13 +383,7 @@ func TestNavbarBrainTab(t *testing.T) {
 		t.Errorf("expected '4: Brain' pill in navbar view, got: %s", view)
 	}
 
-	// Click 4: Brain pill (around X = 100 in 140-width navbar)
-	// Let's test clicking through mouse message
-	zones := nav.View()
-	_ = zones
-
-	// Simulate clicking tab 4 pill
-	clicked := false
+	// Navbar pills are not clickable: sweeping every X must emit no tab commands.
 	for x := 0; x < 140; x++ {
 		_, cmd := nav.Update(tea.MouseMsg{
 			X:    x,
@@ -457,15 +391,10 @@ func TestNavbarBrainTab(t *testing.T) {
 			Type: tea.MouseLeft,
 		})
 		if cmd != nil {
-			msg := cmd()
-			if tabMsg, ok := msg.(messages.SelectSidebarTabMsg); ok && tabMsg.Tab == int(components.TabBrain) {
-				clicked = true
-				break
+			if msg := cmd(); msg != nil {
+				t.Errorf("expected no command on navbar click at X=%d, got: %+v", x, msg)
 			}
 		}
-	}
-	if !clicked {
-		t.Errorf("expected clicking [4: Brain] pill in navbar to emit SelectSidebarTabMsg with TabBrain")
 	}
 }
 
@@ -598,13 +527,20 @@ func TestSidebarBrainTimelineViewAndNavigation(t *testing.T) {
 		t.Errorf("expected empty timeline message, got: %s", emptyTimelineView)
 	}
 
-	// 7. Triangulation: Mouse click in timeline view
+	// 7. Triangulation: mouse clicks only focus, timeline selection is keyboard-driven
 	_ = brainRepo.SaveTimelineEvent(ctx, domain.TimelineEvent{
 		ID:                 "tl-3",
 		ChronologicalOrder: 1,
 		Period:             "Capítulo 3",
 		Title:              "Regreso Triunfal",
 		Description:        "El héroe regresa victorioso",
+	})
+	_ = brainRepo.SaveTimelineEvent(ctx, domain.TimelineEvent{
+		ID:                 "tl-4",
+		ChronologicalOrder: 2,
+		Period:             "Capítulo 3",
+		Title:              "Banquete Final",
+		Description:        "Celebración en la capital",
 	})
 	sidebar, _ = sidebar.Update(sidebar.ReloadBrainFactsCmd()())
 	sidebar, _ = sidebar.Update(tea.MouseMsg{
@@ -614,6 +550,10 @@ func TestSidebarBrainTimelineViewAndNavigation(t *testing.T) {
 	})
 	if sidebar.SelectedTimelineEvent != 0 {
 		t.Errorf("expected SelectedTimelineEvent 0 after mouse click, got %d", sidebar.SelectedTimelineEvent)
+	}
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if sidebar.SelectedTimelineEvent != 1 {
+		t.Errorf("expected SelectedTimelineEvent 1 after 'j', got %d", sidebar.SelectedTimelineEvent)
 	}
 }
 
@@ -1144,24 +1084,35 @@ func TestSidebarAccordionExclusive(t *testing.T) {
 		t.Errorf("expected brain body visible after SelectSidebarTabMsg(3): %s", sidebar.View())
 	}
 
-	// 5. Clicking the open Brain header (row 4: headers 1-4, body from 5)
-	// collapses every section.
-	sidebar, _ = sidebar.Update(tea.MouseMsg{X: 5, Y: 4, Type: tea.MouseLeft})
-	if strings.Contains(sidebar.View(), "Memoria Brain") {
-		t.Errorf("expected collapse after clicking open section header: %s", sidebar.View())
-	}
-
-	// 6. Clicking the Characters header (row 2 when collapsed) opens it.
-	sidebar, _ = sidebar.Update(tea.MouseMsg{X: 5, Y: 2, Type: tea.MouseLeft})
+	// 5. Alt+2 opens Characters exclusively (works even while typing in Notes).
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2"), Alt: true})
 	if sidebar.ActiveTab != components.TabCharacters {
-		t.Errorf("expected TabCharacters after clicking its header, got %v", sidebar.ActiveTab)
+		t.Errorf("expected TabCharacters after alt+2, got %v", sidebar.ActiveTab)
 	}
 	if !strings.Contains(sidebar.View(), "No hay personajes") {
-		t.Errorf("expected characters body after clicking its header: %s", sidebar.View())
+		t.Errorf("expected characters body after alt+2: %s", sidebar.View())
+	}
+	if strings.Contains(sidebar.View(), "Memoria Brain") {
+		t.Errorf("expected brain body closed after alt+2: %s", sidebar.View())
+	}
+
+	// 6. Mouse clicks only focus the sidebar; they never switch sections.
+	before := sidebar.ActiveTab
+	sidebar, cmd := sidebar.Update(tea.MouseMsg{X: 5, Y: 2, Type: tea.MouseLeft})
+	if sidebar.ActiveTab != before {
+		t.Errorf("expected mouse click to leave ActiveTab at %v, got %v", before, sidebar.ActiveTab)
+	}
+	if cmd != nil {
+		if msg := cmd(); msg != nil {
+			t.Errorf("expected no command on sidebar click, got: %+v", msg)
+		}
+	}
+	if !sidebar.Focused {
+		t.Errorf("expected sidebar to be focused after mouse click")
 	}
 }
 
-func TestSidebarAccordionMouseBodySelect(t *testing.T) {
+func TestSidebarAccordionAltDigitsFromNotes(t *testing.T) {
 	tempDir := t.TempDir()
 	chapRepo, _ := repository.NewFileChapterRepository(tempDir)
 	charRepo := repository.NewFileCharacterRepository(tempDir)
@@ -1174,16 +1125,29 @@ func TestSidebarAccordionMouseBodySelect(t *testing.T) {
 		{ID: "c2", Title: "Cap Dos", WordCount: 20},
 	}
 	sidebar, _ = sidebar.Update(messages.FocusMsg{Target: messages.FocusSidebar})
-	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
 
-	// Body starts at row 2 (border 0, header 1); each chapter takes 2 rows,
-	// so row 4 is the title of the second chapter.
-	sidebar, cmd := sidebar.Update(tea.MouseMsg{X: 5, Y: 4, Type: tea.MouseLeft})
-	if sidebar.SelectedChapter != 1 {
-		t.Errorf("expected second chapter selected on body click, got %d", sidebar.SelectedChapter)
+	// Open Notes and type digits: they must land in the text buffer,
+	// not switch sections.
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("abc 123")})
+	if sidebar.ActiveTab != components.TabNotes {
+		t.Fatalf("expected to stay in TabNotes while typing, got %v", sidebar.ActiveTab)
 	}
+	if !strings.Contains(sidebar.NotesValue(), "abc 123") {
+		t.Errorf("expected typed digits in notes buffer, got %q", sidebar.NotesValue())
+	}
+
+	// Alt+1 escapes to Chapters without typing anything extra.
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1"), Alt: true})
+	if sidebar.ActiveTab != components.TabChapters {
+		t.Errorf("expected TabChapters after alt+1 from notes, got %v", sidebar.ActiveTab)
+	}
+
+	// Keyboard selection still emits ChapterSelectedMsg via enter.
+	sidebar, _ = sidebar.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	_, cmd := sidebar.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
-		t.Fatalf("expected ChapterSelectedMsg command on chapter body click")
+		t.Fatalf("expected ChapterSelectedMsg command on enter")
 	}
 	selMsg, ok := cmd().(messages.ChapterSelectedMsg)
 	if !ok || selMsg.Chapter.ID != "c2" {
