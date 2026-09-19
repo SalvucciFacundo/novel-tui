@@ -17,7 +17,6 @@ import (
 	"strings"
 	"sync"
 	"unicode"
-	"unicode/utf8"
 )
 
 //go:embed data/en.txt.gz
@@ -41,8 +40,7 @@ type Token struct {
 // Checker holds the combined dictionaries and user custom words.
 type Checker struct {
 	mu     sync.RWMutex
-	words  []string
-	byLen  map[int][]string // rune length -> words of that length
+	words  []string // sorted, deduped; Check is a binary search
 	custom map[string]struct{}
 
 	customPath string
@@ -78,7 +76,6 @@ func Load(customPath string) (*Checker, error) {
 		custom:     make(map[string]struct{}),
 		customPath: customPath,
 	}
-	c.reindexLengths()
 	if customPath != "" {
 		_ = c.loadCustom()
 	}
@@ -92,15 +89,9 @@ func (c *Checker) WordCount() int {
 	return len(c.words)
 }
 
-func (c *Checker) reindexLengths() {
-	// NOTE: words are byte-sorted, so equal lengths are NOT contiguous.
-	// Bucket by length explicitly instead of recording ranges.
-	c.byLen = make(map[int][]string)
-	for _, w := range c.words {
-		l := utf8.RuneCountInString(w)
-		c.byLen[l] = append(c.byLen[l], w)
-	}
-}
+// editAlphabet holds candidate runes for suggestion generation (both
+// languages, including accented vowels).
+var editAlphabet = []rune("abcdefghijklmnopqrstuvwxyzáéíóúüñç")
 
 // Normalize lowercases a word for dictionary lookup.
 func Normalize(word string) string {
@@ -166,9 +157,18 @@ func (c *Checker) lookupLocked(w string) bool {
 	i := sort.SearchStrings(c.words, w)
 	return i < len(c.words) && c.words[i] == w
 }
-
-// Suggestions returns up to max ordered correction candidates for word,
-// ranked by edit distance, then alphabetically.
+// Suggestions returns up to max ordered correction candidates for word.
+//
+// Generate-and-test in three cheap rounds instead of O(dictionary) distance
+// scans (which collapse under -race):
+//  1. every distance-1 edit of the query (full alphabet),
+//  2. distance-1 edits of each accent variant (covers accent+letter combos,
+//     the dominant Spanish error class),
+//  3. deletes and transposes of round-1 strings (cheap second-order edits).
+//
+// Ranking: accent-folded distance first (so "corason" prefers "corazón"
+// over accentless lookalikes), then exact distance, shared prefix,
+// alphabetically.
 func (c *Checker) Suggestions(word string, max int) []string {
 	w := Normalize(word)
 	if w == "" || max <= 0 {
@@ -178,8 +178,8 @@ func (c *Checker) Suggestions(word string, max int) []string {
 	if i := strings.IndexAny(w, "'’"); i > 0 {
 		w = w[:i]
 	}
-	l := utf8.RuneCountInString(w)
-	if l < 2 {
+	qr := []rune(w)
+	if len(qr) < 2 {
 		return nil
 	}
 
@@ -189,24 +189,44 @@ func (c *Checker) Suggestions(word string, max int) []string {
 		prefix   int
 		word     string
 	}
-	// Rank by accent-folded distance first so "corason" prefers "corazón"
-	// over accentless lookalikes, then by exact distance, shared prefix,
-	// and alphabetically.
-	foldedQuery := foldDiacritics(w)
-	var out []candidate
+
 	c.mu.RLock()
-	for dl := -MaxSuggestionDistance; dl <= MaxSuggestionDistance; dl++ {
-		for _, dictWord := range c.byLen[l+dl] {
-			foldedWord := foldDiacritics(dictWord)
-			fd, ok := osaBounded(foldedQuery, foldedWord, MaxSuggestionDistance)
-			if !ok {
-				continue
-			}
-			d, _ := osaBounded(w, dictWord, MaxSuggestionDistance+2)
-			out = append(out, candidate{foldDist: fd, dist: d, word: dictWord, prefix: commonPrefixRunes(w, dictWord)})
+	defer c.mu.RUnlock()
+	probed := make(map[string]struct{})
+	var hits []string
+	probe := func(s string) {
+		if _, dup := probed[s]; dup || s == w {
+			return
+		}
+		probed[s] = struct{}{}
+		i := sort.SearchStrings(c.words, s)
+		if i < len(c.words) && c.words[i] == s {
+			hits = append(hits, s)
 		}
 	}
-	c.mu.RUnlock()
+
+	round1 := edits1(qr, editAlphabet)
+	for s := range round1 {
+		probe(s)
+	}
+	for _, variant := range accentVariants(qr) {
+		for s := range edits1([]rune(variant), editAlphabet) {
+			probe(s)
+		}
+	}
+	for s := range round1 {
+		for _, d := range deletesTransposes([]rune(s)) {
+			probe(d)
+		}
+	}
+
+	foldedQuery := foldDiacritics(w)
+	out := make([]candidate, 0, len(hits))
+	for _, dictWord := range hits {
+		fd, _ := osaBounded(foldedQuery, foldDiacritics(dictWord), MaxSuggestionDistance+2)
+		d, _ := osaBounded(w, dictWord, MaxSuggestionDistance+2)
+		out = append(out, candidate{foldDist: fd, dist: d, word: dictWord, prefix: commonPrefixRunes(w, dictWord)})
+	}
 
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].foldDist != out[j].foldDist {
@@ -228,6 +248,117 @@ func (c *Checker) Suggestions(word string, max int) []string {
 		res[i] = cand.word
 	}
 	return res
+}
+
+// edits1 returns every string at edit distance exactly 1 from q (deletes,
+// adjacent transposes, replaces and inserts over alpha), plus q itself.
+func edits1(q []rune, alpha []rune) map[string]struct{} {
+	out := make(map[string]struct{}, len(q)*len(alpha))
+	s := func(r []rune) string { return string(r) }
+	out[s(q)] = struct{}{}
+	for i := range q {
+		// Delete q[i].
+		out[s(append(append([]rune{}, q[:i]...), q[i+1:]...))] = struct{}{}
+		// Transpose q[i], q[i+1].
+		if i+1 < len(q) {
+			t := append([]rune{}, q...)
+			t[i], t[i+1] = t[i+1], t[i]
+			out[s(t)] = struct{}{}
+		}
+		// Replace q[i].
+		for _, r := range alpha {
+			if r == q[i] {
+				continue
+			}
+			t := append([]rune{}, q...)
+			t[i] = r
+			out[s(t)] = struct{}{}
+		}
+		// Insert before q[i].
+		for _, r := range alpha {
+			t := append([]rune{}, q[:i]...)
+			t = append(t, r)
+			t = append(t, q[i:]...)
+			out[s(t)] = struct{}{}
+		}
+	}
+	// Insert at the end.
+	for _, r := range alpha {
+		out[s(append(append([]rune{}, q...), r))] = struct{}{}
+	}
+	return out
+}
+
+// deletesTransposes returns deletes and adjacent transposes of q (the cheap
+// subset of distance-1 edits, used for second-order expansion).
+func deletesTransposes(q []rune) []string {
+	var out []string
+	for i := range q {
+		out = append(out, string(append(append([]rune{}, q[:i]...), q[i+1:]...)))
+		if i+1 < len(q) {
+			t := append([]rune{}, q...)
+			t[i], t[i+1] = t[i+1], t[i]
+			out = append(out, string(t))
+		}
+	}
+	return out
+}
+
+// accentAlts maps vowels to their accented counterparts and back (ñ is
+// intentionally excluded: n ≠ ñ in Spanish).
+var accentAlts = map[rune][]rune{
+	'a': {'á'}, 'á': {'a'},
+	'e': {'é'}, 'é': {'e'},
+	'i': {'í'}, 'í': {'i'},
+	'o': {'ó'}, 'ó': {'o'},
+	'u': {'ú', 'ü'}, 'ú': {'u'}, 'ü': {'u'},
+}
+
+// accentVariants returns the query plus accent-toggled variants: the full
+// power set when few vowels are present, single-position toggles otherwise
+// (capped to keep generation cheap).
+func accentVariants(q []rune) []string {
+	var positions []int
+	for i, r := range q {
+		if _, ok := accentAlts[r]; ok {
+			positions = append(positions, i)
+		}
+	}
+	variants := map[string]struct{}{string(q): {}}
+	add := func(base []rune, pos int, alt rune) {
+		t := append([]rune{}, base...)
+		t[pos] = alt
+		variants[string(t)] = struct{}{}
+	}
+	if len(positions) > 5 {
+		for _, p := range positions {
+			for _, alt := range accentAlts[q[p]] {
+				add(q, p, alt)
+			}
+		}
+	} else {
+		current := [][]rune{append([]rune{}, q...)}
+		for _, p := range positions {
+			var next [][]rune
+			for _, base := range current {
+				next = append(next, base)
+				for _, alt := range accentAlts[base[p]] {
+					t := append([]rune{}, base...)
+					t[p] = alt
+					next = append(next, t)
+				}
+			}
+			current = next
+		}
+		for _, v := range current {
+			variants[string(v)] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(variants))
+	for v := range variants {
+		out = append(out, v)
+	}
+	return out
 }
 
 // osaBounded computes the Optimal String Alignment distance between a and b
