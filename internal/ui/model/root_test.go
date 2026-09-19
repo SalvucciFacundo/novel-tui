@@ -13,6 +13,7 @@ import (
 	"github.com/SalvucciFacundo/novel-tui/internal/domain"
 	"github.com/SalvucciFacundo/novel-tui/internal/repository"
 	"github.com/SalvucciFacundo/novel-tui/internal/service"
+	"github.com/SalvucciFacundo/novel-tui/internal/service/spell"
 	"github.com/SalvucciFacundo/novel-tui/internal/ui/messages"
 	"github.com/SalvucciFacundo/novel-tui/internal/ui/model"
 )
@@ -990,3 +991,75 @@ func TestRootModel_ColabServer_Integration(t *testing.T) {
 
 
 
+
+func TestRootModel_SpellMenuFlow(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	configRepo := repository.NewFileConfigRepository(configPath)
+	workspaceMgr := service.NewWorkspaceManager()
+
+	root := model.NewRootModelWithConfig(configRepo, workspaceMgr, messages.ViewStateEditor, tempDir)
+	m, _ := root.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	checker, err := spell.Load("")
+	if err != nil {
+		t.Fatalf("spell.Load failed: %v", err)
+	}
+	m, _ = m.Update(messages.SpellReadyMsg{Checker: checker})
+	m, _ = m.Update(messages.ChapterSelectedMsg{
+		Chapter: domain.Chapter{ID: "c1", Title: "T", Content: "hola novle mundo"},
+	})
+
+	// Underline overlay reaches the composed editor view.
+	if view := m.View(); !strings.Contains(view, "\x1b[4m") {
+		t.Errorf("expected spell underline in editor view")
+	}
+
+	// Open the context menu and feed suggestions.
+	m, _ = m.Update(messages.OpenSpellMenuMsg{Word: "novle", Start: 5, End: 10})
+	if view := m.View(); !strings.Contains(view, "novle") {
+		t.Errorf("expected spell menu in view, got: %s", view)
+	}
+	m, _ = m.Update(messages.SpellSuggestMsg{
+		Word: "novle", Start: 5, End: 10, Suggestions: []string{"novel"},
+	})
+	if view := m.View(); !strings.Contains(view, "novel") {
+		t.Errorf("expected suggestion in menu view")
+	}
+
+	// Stale suggestions for another word are ignored.
+	m, _ = m.Update(messages.SpellSuggestMsg{
+		Word: "zzz", Start: 0, End: 1, Suggestions: []string{"zzz-top"},
+	})
+	if view := m.View(); strings.Contains(view, "zzz-top") {
+		t.Errorf("stale suggestions leaked into menu")
+	}
+
+	// Activate the suggestion with enter: menu closes and the word is
+	// replaced in the chapter.
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatalf("expected activation command from menu enter")
+	}
+	m, _ = m.Update(cmd())
+	if view := m.View(); !strings.Contains(stripRootANSI(view), "hola novel mundo") {
+		t.Errorf("expected applied suggestion in editor, got: %s", view)
+	}
+}
+
+func stripRootANSI(s string) string {
+	var out strings.Builder
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && (s[j] < '@' || s[j] > '~') {
+				j++
+			}
+			i = j + 1
+			continue
+		}
+		out.WriteByte(s[i])
+		i++
+	}
+	return out.String()
+}

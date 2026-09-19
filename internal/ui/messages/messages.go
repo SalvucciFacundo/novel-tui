@@ -2,6 +2,7 @@ package messages
 
 import (
 	"github.com/SalvucciFacundo/novel-tui/internal/domain"
+	"github.com/SalvucciFacundo/novel-tui/internal/service/spell"
 )
 
 // ViewState represents the active top-level screen view.
@@ -219,6 +220,45 @@ type ExecuteCommandMsg struct {
 
 // StartColabServerMsg triggers the provisioning and startup of the Colab GPU LLM server.
 type StartColabServerMsg struct{}
+
+// SpellReadyMsg delivers the background-loaded spellchecker to the editor.
+type SpellReadyMsg struct {
+	Checker *spell.Checker
+}
+
+// OpenSpellMenuMsg requests the contextual spelling/clipboard menu for the
+// word at buffer range [Start, End). Empty Word opens clipboard-only mode.
+type OpenSpellMenuMsg struct {
+	Word       string
+	Start, End int
+}
+
+// SpellSuggestMsg carries asynchronously computed suggestions for the open menu.
+type SpellSuggestMsg struct {
+	Word        string
+	Start, End  int
+	Suggestions []string
+}
+
+// ApplySpellSuggestionMsg replaces the word range with the chosen suggestion.
+type ApplySpellSuggestionMsg struct {
+	Start, End  int
+	Replacement string
+}
+
+// AddCustomWordMsg records a user-approved word in the custom dictionary.
+type AddCustomWordMsg struct {
+	Word string
+}
+
+// EditorCopyMsg requests copying the selection (or menu word) to the clipboard.
+type EditorCopyMsg struct{}
+
+// EditorCutMsg requests cutting the selection (or menu word) to the clipboard.
+type EditorCutMsg struct{}
+
+// EditorPasteMsg requests pasting the clipboard at the cursor.
+type EditorPasteMsg struct{}
 
 // ColabServerStartedMsg is emitted when the Colab GPU LLM server is successfully reachable.
 type ColabServerStartedMsg struct {

@@ -15,6 +15,7 @@ import (
 	"github.com/SalvucciFacundo/novel-tui/internal/domain"
 	"github.com/SalvucciFacundo/novel-tui/internal/repository"
 	"github.com/SalvucciFacundo/novel-tui/internal/service"
+	"github.com/SalvucciFacundo/novel-tui/internal/service/spell"
 	"github.com/SalvucciFacundo/novel-tui/internal/service/llm"
 	"github.com/SalvucciFacundo/novel-tui/internal/ui/components"
 	"github.com/SalvucciFacundo/novel-tui/internal/ui/messages"
@@ -111,6 +112,8 @@ type RootModel struct {
 	modal          components.ModalModel
 	searchModal    components.SearchModalModel
 	commandPalette components.CommandPaletteModel
+	spellMenu      components.SpellMenuModel
+	spellChecker   *spell.Checker
 	navbar         components.NavbarModel
 	sidebar        components.SidebarModel
 	editor         components.EditorModel
@@ -194,6 +197,7 @@ func NewRootModel(
 		modal:          components.NewModalModel(styles),
 		searchModal:    components.NewSearchModalModel(styles),
 		commandPalette: components.NewCommandPaletteModel(styles),
+		spellMenu:      components.NewSpellMenuModel(styles),
 		navbar:         components.NewNavbarModel(styles),
 		sidebar:        components.NewSidebarModel(chapterRepo, characterRepo, styles),
 		editor:         components.NewEditorModel(styles),
@@ -257,6 +261,7 @@ func NewRootModelWithConfig(
 		modal:           components.NewModalModel(styles),
 		searchModal:     components.NewSearchModalModel(styles),
 		commandPalette:  components.NewCommandPaletteModel(styles),
+		spellMenu:       components.NewSpellMenuModel(styles),
 		navbar:          components.NewNavbarModel(styles),
 		sidebar:         components.NewSidebarModel(chapRepo, charRepo, styles),
 		editor:          components.NewEditorModel(styles),
@@ -312,6 +317,15 @@ func (m RootModel) Init() tea.Cmd {
 		m.chatDrawer.Init(),
 		func() tea.Msg { return messages.FocusMsg{Target: m.activeFocus} },
 	)
+
+	// Load spellcheck dictionaries in the background (1.4M entries).
+	cmds = append(cmds, func() tea.Msg {
+		c, err := spell.Load(spell.DefaultCustomPath())
+		if err != nil {
+			return nil
+		}
+		return messages.SpellReadyMsg{Checker: c}
+	})
 
 	// Scan recent novels on startup
 	if m.config != nil && m.config.RootDir != "" {
@@ -768,6 +782,21 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, sCmd)
 		return m, tea.Batch(cmds...)
 
+	case messages.SpellReadyMsg:
+		if msg.Checker != nil {
+			m.spellChecker = msg.Checker
+			m.editor.SetSpellChecker(msg.Checker)
+		}
+		return m, nil
+
+	case messages.OpenSpellMenuMsg:
+		m.spellMenu.Open(msg.Word, msg.Start, msg.End)
+		return m, nil
+
+	case messages.SpellSuggestMsg:
+		m.spellMenu.SetSuggestions(msg.Word, msg.Start, msg.End, msg.Suggestions)
+		return m, nil
+
 	case messages.ChapterCreatedMsg:
 		var sCmd tea.Cmd
 		m.sidebar, sCmd = m.sidebar.Update(msg)
@@ -1073,6 +1102,11 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.modal, mCmd = m.modal.Update(msg)
 			return m, mCmd
 		}
+		if m.spellMenu.Active {
+			var spCmd tea.Cmd
+			m.spellMenu, spCmd = m.spellMenu.Update(msg)
+			return m, spCmd
+		}
 
 		switch m.viewState {
 		case messages.ViewStateLauncher:
@@ -1117,7 +1151,8 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sidebar, sCmd = m.sidebar.Update(localMsg)
 				return m, sCmd
 			} else if !m.showChatDrawer || msg.X < sidebarWidth+editorWidth {
-				if msg.Type == tea.MouseLeft {
+				if msg.Type == tea.MouseLeft || msg.Type == tea.MouseRight ||
+					(msg.Button == tea.MouseButtonRight && msg.Action == tea.MouseActionPress) {
 					m.activeFocus = messages.FocusEditor
 					m.sidebar.Focused = false
 					m.chatDrawer.Focused = false
@@ -1155,6 +1190,11 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var mCmd tea.Cmd
 			m.modal, mCmd = m.modal.Update(msg)
 			return m, mCmd
+		}
+		if m.spellMenu.Active {
+			var spCmd tea.Cmd
+			m.spellMenu, spCmd = m.spellMenu.Update(msg)
+			return m, spCmd
 		}
 
 		if key.Matches(msg, m.keys.Quit) {
@@ -1334,6 +1374,7 @@ func (m *RootModel) recalculateLayout() {
 	m.modal.SetSize(m.width, m.height)
 	m.searchModal.SetSize(m.width, m.height)
 	m.commandPalette.SetSize(m.width, m.height)
+	m.spellMenu.SetSize(m.width, m.height)
 	m.launcher.SetSize(m.width, m.height)
 	m.llmConfig.SetSize(m.width, m.height)
 
@@ -1447,6 +1488,10 @@ func (m RootModel) View() string {
 
 	if m.modal.Active {
 		return m.modal.View()
+	}
+
+	if m.spellMenu.Active {
+		return m.spellMenu.View()
 	}
 
 	return baseView
